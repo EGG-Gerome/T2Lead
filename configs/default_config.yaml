@@ -1,0 +1,110 @@
+# ===================================================================
+# DrugPipe — default pipeline configuration
+# ===================================================================
+# Override any value via environment variables prefixed with DP_,
+# e.g.  DP_TARGET_TO_HIT__CHEMBL__MAX_ACTIVITIES=50000
+
+pipeline:
+  stages:
+    - target_discovery
+    - target_to_hit
+    - hit_to_lead
+  seed: 42
+  out_dir: ./data
+
+# -------------------------------------------------------------------
+# Stage 1 — Target Discovery
+# -------------------------------------------------------------------
+target_discovery:
+  disease: ""                        # e.g. "liver cancer" or EFO_0001378
+  top_n_targets: 5
+
+  opentargets:
+    enabled: true
+    api_url: https://api.platform.opentargets.org/api/v4/graphql
+    min_score: 0.1
+
+  origene:
+    enabled: false
+    server_url: http://127.0.0.1:8788
+    mode: quick                      # quick | detailed
+
+# -------------------------------------------------------------------
+# Stage 2 — Target to Hit  (ChEMBL virtual screening)
+# -------------------------------------------------------------------
+target_to_hit:
+  target_chembl_id: ""               # leave empty to auto-select from Stage 1
+
+  chembl:
+    base_url: https://www.ebi.ac.uk/chembl/api/data
+    page_limit: 1000
+    max_molecules: 0                 # 0 = unlimited
+    max_activities: 0
+    require_nM: true
+    polite_sleep: 0.05
+
+  dataset:
+    min_train_samples: 200
+
+  featurizer:
+    fp_radius: 2
+    fp_nbits: 2048
+
+  model:
+    rf_n_estimators: 600
+    rf_min_samples_leaf: 2
+    mlp_epochs: 25
+    mlp_batch_size: 256
+    mlp_lr: 0.002
+    mlp_weight_decay: 0.0001
+    test_size: 0.2
+
+  filter:
+    pred_pIC50_min: 6.0
+    qed_min: 0.6
+    top_n: 200
+    mw_min: 150
+    mw_max: 500
+    logp_min: -1.0
+    logp_max: 5.0
+    tpsa_max: 140
+    hbd_max: 5
+    hba_max: 10
+    rotb_max: 10
+    rings_max: 6
+
+# -------------------------------------------------------------------
+# Stage 3 — Hit to Lead
+# -------------------------------------------------------------------
+hit_to_lead:
+  max_hits_input: 100                # cap hits entering H2L
+
+  scaffold:
+    min_cluster_size: 3
+
+  clustering:
+    tanimoto_cutoff: 0.4
+
+  analog_gen:
+    enabled: true
+    max_analogs_per_hit: 50
+    crem_db_path: ""                 # path to CReM fragment DB; empty = skip CReM
+    crem_radius: 3
+    crem_min_size: 0
+    crem_max_size: 10
+
+  mpo:
+    w_potency: 0.40
+    w_qed: 0.25
+    w_admet: 0.20
+    w_novelty: 0.15
+
+  reinvent4:
+    enabled: false
+    reinvent_path: ""
+    prior_path: ""
+    batch_size: 128
+    n_steps: 100
+
+  output:
+    top_n_leads: 50

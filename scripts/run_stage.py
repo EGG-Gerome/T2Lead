@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Run a single pipeline stage independently."""
+# 独立运行流水线某一阶段。
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+# 将 src 加入路径以便导入 drugpipe
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from drugpipe.config import load_config
+from drugpipe.pipeline import run_hit_to_lead, run_target_discovery, run_target_to_hit
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run a single DrugPipe stage.")
+    parser.add_argument(
+        "stage",
+        choices=["target_discovery", "target_to_hit", "hit_to_lead"],
+        help="Which stage to run.",
+    )
+    parser.add_argument("-c", "--config", default=None, help="Custom YAML config.")
+    parser.add_argument("--disease", default=None, help="Disease name (Stage 1).")
+    parser.add_argument("--target", default=None, help="ChEMBL target ID (Stage 2).")
+    parser.add_argument("--hits-csv", default=None, help="Hits CSV path (Stage 3).")
+    parser.add_argument("-v", "--verbose", action="store_true")
+
+    args = parser.parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    overrides = {}
+    if args.disease:
+        overrides.setdefault("target_discovery", {})["disease"] = args.disease
+    if args.target:
+        overrides.setdefault("target_to_hit", {})["target_chembl_id"] = args.target
+
+    cfg = load_config(config_path=args.config, overrides=overrides)
+
+    if args.stage == "target_discovery":
+        targets = run_target_discovery(cfg)
+        for t in targets:
+            print(f"  {t['chembl_id']}  {t.get('symbol', '')}  score={t.get('rank_score', t.get('score', 0)):.3f}")
+
+    elif args.stage == "target_to_hit":
+        df_hits = run_target_to_hit(cfg, target_chembl_id=args.target)
+        print(f"\nHit candidates: {len(df_hits)} rows")
+        print(df_hits.head(10).to_string(index=False))
+
+    elif args.stage == "hit_to_lead":
+        import pandas as pd
+        from drugpipe.config import get_out_dir
+
+        hits_path = args.hits_csv or str(get_out_dir(cfg) / "final_hit_candidates.csv")
+        df_hits = pd.read_csv(hits_path)
+        print(f"Loaded {len(df_hits)} hits from {hits_path}")
+        df_leads = run_hit_to_lead(cfg, df_hits)
+        print(f"\nLead candidates: {len(df_leads)} rows")
+        print(df_leads.head(10).to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()

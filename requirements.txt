@@ -1,0 +1,16 @@
+# Core
+numpy
+pandas
+scikit-learn
+requests
+pyyaml
+python-dotenv
+
+# RDKit — install via conda: conda install -c conda-forge rdkit
+# or pip install rdkit  (if wheel is available for your platform)
+
+# Deep learning (optional)
+# torch
+
+# Hit-to-Lead analog generation (optional)
+# crem
