@@ -87,6 +87,7 @@ cd T2Lead
 
 # 2. 创建 conda 环境（推荐）
 conda create -n t2lead python=3.11 -y
+conda init && source ~/.bashrc	# 首次安装 conda 后要执行
 conda activate t2lead
 conda install -c conda-forge rdkit -y
 

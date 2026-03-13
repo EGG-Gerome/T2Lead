@@ -87,6 +87,7 @@ cd T2Lead
 
 # 2. Create a conda environment (recommended for RDKit)
 conda create -n t2lead python=3.11 -y
+conda init && source ~/.bashrc	# # Run only after first Conda installation
 conda activate t2lead
 conda install -c conda-forge rdkit -y
 
