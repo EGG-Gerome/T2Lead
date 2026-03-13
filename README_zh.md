@@ -102,8 +102,9 @@ pip install torch
 
 # 6. （可选）CReM 用于阶段三类似物生成
 pip install crem
-# 还需下载 CReM 片段数据库（约 2 GB）：
-# https://github.com/DrrDom/crem#databases
+bash scripts/download_crem_db.sh
+# 默认下载约 1.9 GB：chembl33_sa25_f5.db.gz
+# 可选：指定其他数据库，例如 bash scripts/download_crem_db.sh chembl33_sa2_f5
 ```
 
 ### 环境变量

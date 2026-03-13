@@ -102,8 +102,9 @@ pip install torch
 
 # 6. (Optional) CReM for analog generation in Stage 3
 pip install crem
-# You also need a CReM fragment database (~2 GB) — see:
-# https://github.com/DrrDom/crem#databases
+bash scripts/download_crem_db.sh
+# By default this downloads ~1.9 GB: chembl33_sa25_f5.db.gz
+# Optional: choose another DB, e.g. bash scripts/download_crem_db.sh chembl33_sa2_f5
 ```
 
 ### Environment Variables
