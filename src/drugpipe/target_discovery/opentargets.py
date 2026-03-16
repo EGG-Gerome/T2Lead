@@ -56,8 +56,9 @@ query TargetChembl($ensemblId: String!) {
     id
     approvedSymbol
     approvedName
-    proteinAnnotations {
-      chemblIds
+    dbXrefs {
+      id
+      source
     }
   }
 }
@@ -141,8 +142,20 @@ class OpenTargetsClient:
         tgt = data.get("data", {}).get("target")
         if tgt is None:
             return []
-        chembl_ids = (tgt.get("proteinAnnotations") or {}).get("chemblIds") or []
-        return chembl_ids
+
+        # OpenTargets schema now exposes ChEMBL IDs via dbXrefs.
+        xrefs = tgt.get("dbXrefs") or []
+        chembl_ids = []
+        for x in xrefs:
+            xid = (x or {}).get("id")
+            src = ((x or {}).get("source") or "").lower()
+            if not xid:
+                continue
+            if src == "chembl" or str(xid).startswith("CHEMBL"):
+                chembl_ids.append(str(xid))
+
+        # Preserve order while removing duplicates.
+        return list(dict.fromkeys(chembl_ids))
 
     # ------------------------------------------------------------------
     def discover(self, disease_query: str, top_n: int = 5) -> List[Dict[str, Any]]:

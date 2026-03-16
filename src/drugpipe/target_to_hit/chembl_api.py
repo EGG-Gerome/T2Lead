@@ -52,14 +52,15 @@ class ChEMBLCrawler:
     def crawl_molecules(self) -> Path:
         """Crawl molecule records (chembl_id + canonical_smiles)."""
         # 爬取分子记录（chembl_id + canonical_smiles）。
-        if self.molecules_csv.exists():
-            logger.info("Molecules CSV already exists, skipping crawl.")
-            return self.molecules_csv
-
         state = load_state(self.state_path)
-        if state.get("molecule_done"):
+        if self.molecules_csv.exists() and state.get("molecule_done"):
             logger.info("Molecule crawl marked done in state, skipping.")
             return self.molecules_csv
+        if self.molecules_csv.exists() and not state.get("molecule_done"):
+            logger.info(
+                "Resuming molecule crawl from existing CSV (offset=%d).",
+                int(state.get("molecule_offset", 0)),
+            )
 
         url = f"{self.base_url}/molecule.json"
         offset = int(state.get("molecule_offset", 0))
@@ -98,14 +99,15 @@ class ChEMBLCrawler:
     def crawl_activities(self) -> Path:
         """Crawl IC50 activity records."""
         # 爬取 IC50 活性记录。
-        if self.activities_csv.exists():
-            logger.info("Activities CSV already exists, skipping crawl.")
-            return self.activities_csv
-
         state = load_state(self.state_path)
-        if state.get("activity_done"):
+        if self.activities_csv.exists() and state.get("activity_done"):
             logger.info("Activity crawl marked done in state, skipping.")
             return self.activities_csv
+        if self.activities_csv.exists() and not state.get("activity_done"):
+            logger.info(
+                "Resuming activity crawl from existing CSV (offset=%d).",
+                int(state.get("activity_offset", 0)),
+            )
 
         url = f"{self.base_url}/activity.json"
         offset = int(state.get("activity_offset", 0))
