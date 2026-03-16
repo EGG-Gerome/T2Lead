@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import logging
+import os
+from functools import partial
+from multiprocessing import Pool
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -70,29 +73,41 @@ class VirtualScreener:
     # ------------------------------------------------------------------
     @staticmethod
     def _add_properties(df: pd.DataFrame) -> None:
-        qeds, alerts, pass_rules_list = [], [], []
-        desc_cols: Dict[str, list] = {
-            k: [] for k in ["MW", "cLogP", "TPSA", "HBD", "HBA", "RotB", "Rings", "HeavyAtoms"]
-        }
+        smiles_list = df["canonical_smiles"].tolist()
+        n_workers = min(os.cpu_count() or 1, 16)
 
-        for smi in df["canonical_smiles"]:
-            mol = safe_mol(smi)
-            if mol is None:
-                qeds.append(np.nan)
-                alerts.append(True)
-                pass_rules_list.append(False)
-                for k in desc_cols:
-                    desc_cols[k].append(np.nan)
-                continue
+        logger.info("Computing molecular properties (%d molecules, %d workers) ...",
+                     len(smiles_list), n_workers)
 
-            qeds.append(calc_qed(mol))
-            alerts.append(has_structural_alert(mol))
-            desc = calc_descriptors(mol)
-            for k in desc_cols:
-                desc_cols[k].append(float(desc[k]))
-            pass_rules_list.append(True)  # actual rule check deferred to filter
+        if n_workers > 1 and len(smiles_list) > 500:
+            chunk_size = max(200, len(smiles_list) // (n_workers * 4))
+            with Pool(n_workers) as pool:
+                results = pool.map(_compute_props_single, smiles_list, chunksize=chunk_size)
+        else:
+            results = [_compute_props_single(smi) for smi in smiles_list]
+
+        _DESC_KEYS = ["MW", "cLogP", "TPSA", "HBD", "HBA", "RotB", "Rings", "HeavyAtoms"]
+        qeds, alerts = [], []
+        desc_cols: Dict[str, list] = {k: [] for k in _DESC_KEYS}
+
+        for q, a, desc in results:
+            qeds.append(q)
+            alerts.append(a)
+            for k in _DESC_KEYS:
+                desc_cols[k].append(desc.get(k, np.nan))
 
         df["QED"] = qeds
         df["HasAlert"] = alerts
         for k, v in desc_cols.items():
             df[k] = v
+
+
+def _compute_props_single(smi: str) -> Tuple[float, bool, Dict[str, Any]]:
+    """Compute QED, structural alerts, and descriptors for one SMILES.
+
+    Top-level function so it can be pickled by multiprocessing.
+    """
+    mol = safe_mol(smi)
+    if mol is None:
+        return (np.nan, True, {})
+    return (calc_qed(mol), has_structural_alert(mol), calc_descriptors(mol))

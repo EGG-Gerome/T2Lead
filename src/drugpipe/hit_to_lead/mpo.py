@@ -120,17 +120,19 @@ class MPOScorer:
             df.at[idx, "admet_pass"] = self._rules_pass(desc) and not df.at[idx, "HasAlert"]
 
         already = ~need_calc
-        if already.any() and "MW" in df.columns:
+        if already.any():
+            _desc_cols = ["MW", "cLogP", "TPSA", "HBD", "HBA", "RotB", "Rings", "HeavyAtoms"]
+            has_desc = all(c in df.columns for c in _desc_cols)
             for idx in df.index[already]:
-                desc = {k: df.at[idx, k] for k in self.rules if k.split("_")[0].upper() in df.columns}
-                if desc:
-                    continue
-                mol = safe_mol(df.at[idx, "canonical_smiles"])
-                if mol is None:
-                    df.at[idx, "admet_pass"] = False
-                    continue
-                d = calc_descriptors(mol)
-                df.at[idx, "admet_pass"] = self._rules_pass(d) and not df.at[idx, "HasAlert"]
+                if has_desc and pd.notna(df.at[idx, "MW"]):
+                    desc = {c: df.at[idx, c] for c in _desc_cols}
+                else:
+                    mol = safe_mol(df.at[idx, "canonical_smiles"])
+                    if mol is None:
+                        df.at[idx, "admet_pass"] = False
+                        continue
+                    desc = calc_descriptors(mol)
+                df.at[idx, "admet_pass"] = self._rules_pass(desc) and not df.at[idx, "HasAlert"]
 
     def _rules_pass(self, desc: Dict[str, Any]) -> bool:
         """Check if descriptor dict satisfies ADMET rules. / 检查描述符是否满足 ADMET 规则。"""

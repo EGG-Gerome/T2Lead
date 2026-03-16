@@ -6,13 +6,17 @@ from __future__ import annotations
 import logging
 import random
 import sys
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+from rdkit import RDLogger
 
 from drugpipe.config import get_out_dir, load_config
+
+RDLogger.DisableLog("rdApp.warning")
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +100,7 @@ def run_target_discovery(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 def run_target_to_hit(
     cfg: Dict[str, Any],
     target_chembl_id: Optional[str] = None,
+    crawl_out_dir: Optional[Path] = None,
 ) -> pd.DataFrame:
     """Stage 2: ChEMBL crawl → ML training → virtual screening → ADMET filter."""
     # 阶段二：ChEMBL 爬取 → ML 训练 → 虚拟筛选 → ADMET 过滤。
@@ -107,18 +112,19 @@ def run_target_to_hit(
     from drugpipe.target_to_hit.screener import VirtualScreener
 
     out_dir = get_out_dir(cfg)
+    shared_dir = crawl_out_dir or out_dir
     seed = int(cfg.get("pipeline", {}).get("seed", 42))
     _set_seed(seed)
 
     # Resolve target ID / 解析靶点 ID
     tid = target_chembl_id or cfg.get("target_to_hit", {}).get("target_chembl_id", "") or None
 
-    # 1. Crawl / 爬取
-    crawler = ChEMBLCrawler(cfg, out_dir)
+    # 1. Crawl (shared directory) / 爬取（共享目录）
+    crawler = ChEMBLCrawler(cfg, shared_dir)
     mol_csv = crawler.crawl_molecules()
     act_csv = crawler.crawl_activities()
 
-    # 2. Dataset / 数据集构建
+    # 2. Dataset (per-disease directory) / 数据集构建（按疾病子目录）
     builder = DatasetBuilder(cfg, out_dir)
     df_ds = builder.build(mol_csv, act_csv, tid)
 
@@ -185,6 +191,15 @@ def run_hit_to_lead(
 # 完整流水线
 # ======================================================================
 
+def _disease_slug(disease: str) -> str:
+    """Sanitize disease name into a filesystem-safe directory name."""
+    import re
+    slug = disease.strip().lower()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s]+", "_", slug)
+    return slug or "default"
+
+
 def run_pipeline(cfg: Dict[str, Any]) -> None:
     """Execute the stages listed in ``pipeline.stages``."""
     # 执行配置中 pipeline.stages 所列阶段。
@@ -192,8 +207,17 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
     seed = int(cfg.get("pipeline", {}).get("seed", 42))
     _set_seed(seed)
 
-    out_dir = get_out_dir(cfg)
-    logger.info("Pipeline output directory: %s", out_dir)
+    base_out_dir = get_out_dir(cfg)
+
+    disease = cfg.get("target_discovery", {}).get("disease", "")
+    if disease:
+        run_out_dir = base_out_dir / _disease_slug(disease)
+        run_out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        run_out_dir = base_out_dir
+
+    logger.info("Pipeline base output: %s", base_out_dir)
+    logger.info("Run-specific output : %s", run_out_dir)
 
     target_chembl_id: Optional[str] = None
     df_hits: Optional[pd.DataFrame] = None
@@ -220,9 +244,12 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         logger.info("=" * 60)
 
         if all_targets and "target_discovery" in stages:
-            target_chembl_id = _pick_viable_target(cfg, all_targets, out_dir)
+            target_chembl_id = _pick_viable_target(cfg, all_targets, base_out_dir)
 
-        df_hits = run_target_to_hit(cfg, target_chembl_id=target_chembl_id)
+        # Crawl data is shared (base_out_dir); per-disease outputs go to run_out_dir
+        cfg_s2 = _override_out_dir(cfg, run_out_dir)
+        df_hits = run_target_to_hit(cfg_s2, target_chembl_id=target_chembl_id,
+                                     crawl_out_dir=base_out_dir)
         trainer = df_hits.attrs.get("_trainer")
         featurizer = df_hits.attrs.get("_featurizer")
 
@@ -232,7 +259,7 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         logger.info("STAGE 3: Hit to Lead")
         logger.info("=" * 60)
         if df_hits is None:
-            hit_csv = out_dir / "final_hit_candidates.csv"
+            hit_csv = run_out_dir / "final_hit_candidates.csv"
             if hit_csv.exists():
                 df_hits = pd.read_csv(hit_csv)
                 logger.info("Loaded hits from %s (%d rows)", hit_csv, len(df_hits))
@@ -240,13 +267,22 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
                 logger.error("No hit candidates available. Run Stage 2 first.")
                 return
 
+        cfg_s3 = _override_out_dir(cfg, run_out_dir)
         predict_fn = trainer.predict if trainer else None
         feat_fn = featurizer.transform if featurizer else None
-        run_hit_to_lead(cfg, df_hits, model_predict_fn=predict_fn, featurizer_fn=feat_fn)
+        run_hit_to_lead(cfg_s3, df_hits, model_predict_fn=predict_fn, featurizer_fn=feat_fn)
 
     logger.info("=" * 60)
     logger.info("PIPELINE COMPLETE")
     logger.info("=" * 60)
+
+
+def _override_out_dir(cfg: Dict[str, Any], out_dir: Path) -> Dict[str, Any]:
+    """Return a shallow config copy with pipeline.out_dir overridden."""
+    import copy
+    cfg2 = copy.deepcopy(cfg)
+    cfg2.setdefault("pipeline", {})["out_dir"] = str(out_dir)
+    return cfg2
 
 
 # ======================================================================
