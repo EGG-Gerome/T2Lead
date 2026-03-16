@@ -169,11 +169,14 @@ class ModelTrainer:
         return self._predict_torch(self.mlp, self._device, X)
 
     @staticmethod
-    def _predict_torch(model: Any, device: Any, X: np.ndarray) -> np.ndarray:
+    def _predict_torch(model: Any, device: Any, X: np.ndarray, batch_size: int = 4096) -> np.ndarray:
         model.eval()
+        preds = []
         with torch.no_grad():
-            t = torch.tensor(X, dtype=torch.float32, device=device)
-            return model(t).detach().cpu().numpy()
+            for i in range(0, len(X), batch_size):
+                t = torch.tensor(X[i : i + batch_size], dtype=torch.float32, device=device)
+                preds.append(model(t).detach().cpu().numpy())
+        return np.concatenate(preds)
 
 
 def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:

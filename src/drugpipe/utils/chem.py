@@ -9,9 +9,10 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from rdkit import Chem, DataStructs
-from rdkit.Chem import AllChem, Crippen, Descriptors, Lipinski
+from rdkit.Chem import Crippen, Descriptors, Lipinski
 from rdkit.Chem.FilterCatalog import FilterCatalog, FilterCatalogParams
 from rdkit.Chem.QED import qed
+from rdkit.Chem import rdFingerprintGenerator
 
 
 # ---------------------------------------------------------------------------
@@ -60,12 +61,23 @@ def safe_mol(smiles: str) -> Optional[Chem.Mol]:
 # 分子指纹
 # ---------------------------------------------------------------------------
 
+_FP_GENERATORS: Dict[tuple, Any] = {}
+
+
+def _get_morgan_gen(radius: int, nbits: int) -> Any:
+    key = (radius, nbits)
+    if key not in _FP_GENERATORS:
+        _FP_GENERATORS[key] = rdFingerprintGenerator.GetMorganGenerator(
+            radius=radius, fpSize=nbits,
+        )
+    return _FP_GENERATORS[key]
+
+
 def morgan_fp_bits(mol: Chem.Mol, radius: int = 2, nbits: int = 2048) -> np.ndarray:
     """Morgan (ECFP) bit vector. / Morgan（ECFP）位向量。"""
-    fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=nbits)
-    arr = np.zeros(nbits, dtype=np.uint8)
-    DataStructs.ConvertToNumpyArray(fp, arr)
-    return arr
+    gen = _get_morgan_gen(radius, nbits)
+    fp = gen.GetFingerprintAsNumPy(mol)
+    return fp.astype(np.uint8)
 
 
 def smiles_to_fp(smiles: str, radius: int = 2, nbits: int = 2048) -> Optional[np.ndarray]:

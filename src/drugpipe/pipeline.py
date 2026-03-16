@@ -30,6 +30,54 @@ def _set_seed(seed: int) -> None:
 
 
 # ======================================================================
+# Target viability check
+# 靶点可用性检查
+# ======================================================================
+
+def _pick_viable_target(
+    cfg: Dict[str, Any],
+    targets: List[Dict[str, Any]],
+    out_dir: Path,
+) -> str:
+    """Pick the first target from *targets* that has enough IC50 records.
+
+    Falls back to the top-ranked target if activity data is not yet available
+    (i.e. first run before crawl).
+    """
+    act_csv = out_dir / "activities_ic50.csv"
+    min_samples = int(
+        cfg.get("target_to_hit", {}).get("dataset", {}).get("min_train_samples", 200)
+    )
+
+    if not act_csv.exists():
+        picked = targets[0]["chembl_id"]
+        logger.info("Activity data not yet crawled; using top-ranked target %s", picked)
+        return picked
+
+    df_act = pd.read_csv(act_csv, usecols=["target_chembl_id"])
+    counts = df_act["target_chembl_id"].value_counts()
+
+    for t in targets:
+        cid = t["chembl_id"]
+        n = counts.get(cid, 0)
+        symbol = t.get("symbol", "")
+        logger.info("  %s (%s): %d IC50 records", cid, symbol, n)
+        if n >= min_samples:
+            logger.info(
+                "Selected target %s (%s) — %d samples >= minimum %d",
+                cid, symbol, n, min_samples,
+            )
+            return cid
+
+    picked = targets[0]["chembl_id"]
+    logger.warning(
+        "No target met the minimum %d samples. Falling back to top-ranked %s.",
+        min_samples, picked,
+    )
+    return picked
+
+
+# ======================================================================
 # Stage runners
 # 各阶段执行函数
 # ======================================================================
@@ -153,14 +201,15 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
     featurizer = None
 
     # Stage 1
+    all_targets: List[Dict[str, Any]] = []
     if "target_discovery" in stages:
         logger.info("=" * 60)
         logger.info("STAGE 1: Target Discovery")
         logger.info("=" * 60)
-        targets = run_target_discovery(cfg)
-        if targets:
-            target_chembl_id = targets[0]["chembl_id"]
-            logger.info("Selected primary target: %s", target_chembl_id)
+        all_targets = run_target_discovery(cfg)
+        if all_targets:
+            target_chembl_id = all_targets[0]["chembl_id"]
+            logger.info("Top-ranked target: %s", target_chembl_id)
         else:
             logger.warning("No targets found. Stage 2 will use config target_chembl_id or auto-select.")
 
@@ -169,6 +218,10 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         logger.info("=" * 60)
         logger.info("STAGE 2: Target to Hit")
         logger.info("=" * 60)
+
+        if all_targets and "target_discovery" in stages:
+            target_chembl_id = _pick_viable_target(cfg, all_targets, out_dir)
+
         df_hits = run_target_to_hit(cfg, target_chembl_id=target_chembl_id)
         trainer = df_hits.attrs.get("_trainer")
         featurizer = df_hits.attrs.get("_featurizer")
