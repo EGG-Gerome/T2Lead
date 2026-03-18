@@ -77,9 +77,10 @@ T2Lead/
 ├── scripts/
 │   ├── run_pipeline.py            # 运行完整流水线
 │   └── run_stage.py               # 运行单阶段
-├── data/                          # 输出目录（已加入 .gitignore）
-└── notebooks/
-    └── analysis.ipynb
+└── data/                          # 输出目录（已加入 .gitignore）
+    ├── logs/                      # 完整日志 + 精简日志
+    ├── fp_cache/                  # 缓存的 Morgan 指纹
+    └── <疾病>/                    # 各疾病输出子目录
 ```
 
 ## 安装
@@ -89,6 +90,8 @@ T2Lead/
 - Python >= 3.9
 - RDKit（建议通过 conda 安装）
 - 推荐 NVIDIA GPU（CUDA）用于 MLP 训练 + MD 模拟加速
+
+> **GPU 兼容性**：RTX 50 系列（Blackwell，如 RTX 5090）需要 CUDA 12.8+ 的 PyTorch（`cu128` 版本）。RTX 40 系列（Ada）用 CUDA 12.4+（`cu124`）。RTX 30 系列（Ampere）用 CUDA 11.8+（`cu118`）。详见下方步骤 5。
 
 ### 安装步骤
 
@@ -108,8 +111,11 @@ pip install -r requirements.txt
 # 4. 以可编辑模式安装
 pip install -e .
 
-# 5. （可选）深度学习支持
-pip install torch
+# 5. （可选）深度学习支持 — 根据你的 GPU 选择一行执行：
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080 (Ampere)
+# pip install torch torchvision  # 仅 CPU（无 GPU）
 
 # 6. （可选）CReM 用于阶段三类似物生成
 pip install crem
@@ -124,6 +130,9 @@ pip install vina meeko gemmi
 
 # 9. （可选）阶段四 MD 模拟（GPU 加速）
 conda install -c conda-forge openmm pdbfixer mdtraj -y
+
+# 10. （可选）MD 配体力场参数化（GAFF2）
+conda install -c conda-forge openmmforcefields openff-toolkit -y
 ```
 
 ### 环境变量
@@ -193,7 +202,9 @@ python scripts/run_pipeline.py \
   -v
 ```
 
-**场景 C — 纯对接模式**（全新靶点，完全没有活性数据，但有蛋白结构）：
+**场景 C — 纯对接模式**（全新靶点，完全没有 IC50 活性数据）：
+
+`--docking-only` 跳过 ML 流程（RandomForest + MLP 训练及虚拟筛选），因为没有 IC50 数据无法训练模型。如果你已经知道靶点，不需要 Stage 1（直接用 `--target`）。Stage 2 仅按类药性过滤候选分子。Stage 3 仍可通过 CReM 生成类似物。Stage 4 对接成为主要打分方式。
 
 ```bash
 # 有已知 PDB 结构：

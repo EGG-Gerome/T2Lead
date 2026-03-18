@@ -77,9 +77,10 @@ T2Lead/
 ├── scripts/
 │   ├── run_pipeline.py            # Run full pipeline
 │   └── run_stage.py               # Run a single stage
-├── data/                          # Output directory (gitignored)
-└── notebooks/
-    └── analysis.ipynb
+└── data/                          # Output directory (gitignored)
+    ├── logs/                      # Full + summary run logs
+    ├── fp_cache/                  # Cached Morgan fingerprints
+    └── <disease>/                 # Per-disease outputs
 ```
 
 ## Installation
@@ -89,6 +90,8 @@ T2Lead/
 - Python >= 3.9
 - RDKit (install via conda or pip)
 - NVIDIA GPU recommended (CUDA) for MLP training + MD simulation
+
+> **GPU Compatibility**: RTX 50-series (Blackwell, e.g. RTX 5090) requires PyTorch with CUDA 12.8+ (`cu128` wheels). RTX 40-series (Ada) works with CUDA 12.4+ (`cu124`). RTX 30-series (Ampere) works with CUDA 11.8+ (`cu118`). See step 5 below.
 
 ### Steps
 
@@ -108,8 +111,11 @@ pip install -r requirements.txt
 # 4. Install the package in editable mode
 pip install -e .
 
-# 5. (Optional) Deep learning support
-pip install torch
+# 5. (Optional) Deep learning support — choose ONE line matching your GPU:
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080 (Ampere)
+# pip install torch torchvision  # CPU only (no GPU)
 
 # 6. (Optional) CReM for analog generation in Stage 3
 pip install crem
@@ -118,13 +124,15 @@ bash scripts/download_crem_db.sh
 # 7. (Optional) REINVENT4 for RL-based molecular generation in Stage 3
 git clone https://github.com/MolecularAI/REINVENT4.git
 cd REINVENT4 && pip install -e . && cd ..
-# Download prior models from REINVENT4 releases or train your own
 
 # 8. (Optional) Molecular docking in Stage 4
 pip install vina meeko gemmi
 
 # 9. (Optional) MD simulation in Stage 4 (GPU-accelerated)
 conda install -c conda-forge openmm pdbfixer mdtraj -y
+
+# 10. (Optional) MD ligand parameterization (GAFF2 force field)
+conda install -c conda-forge openmmforcefields openff-toolkit -y
 ```
 
 ### Environment Variables
@@ -195,7 +203,9 @@ python scripts/run_pipeline.py \
   -v
 ```
 
-**Scenario C — Docking-only mode** (truly novel target with zero activity data, but a protein structure exists):
+**Scenario C — Docking-only mode** (truly novel target with zero IC50 activity data):
+
+`--docking-only` skips the ML pipeline (RandomForest + MLP training and virtual screening) because there is no IC50 data to train on. Stage 1 is not needed if you already know your target (use `--target` directly). Stage 2 filters candidates by drug-likeness only. Stage 3 still generates analogs via CReM. Stage 4 docking becomes the primary scoring method.
 
 ```bash
 # With a known PDB structure:

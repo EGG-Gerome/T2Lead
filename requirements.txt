@@ -5,27 +5,29 @@ scikit-learn
 requests
 pyyaml
 python-dotenv
+joblib
 
 # RDKit — install via conda: conda install -c conda-forge rdkit
 # or pip install rdkit  (if wheel is available for your platform)
 
-# Deep learning (optional)
-# torch
+# Deep learning (optional — choose ONE matching your GPU)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080 (Ampere)
+# pip install torch torchvision                                                     # CPU only
 
 # Hit-to-Lead analog generation (optional)
-# crem
+# pip install crem
 
 # Stage 4: Lead Optimization — Molecular Docking (optional)
-# pip install vina meeko
-# vina
-# meeko
+# pip install vina meeko gemmi
 
 # Stage 4: Lead Optimization — MD Simulation (optional)
-# conda install -c conda-forge openmm pdbfixer mdtraj
-# openmm
-# pdbfixer
-# mdtraj
+# conda install -c conda-forge openmm pdbfixer mdtraj -y
+
+# Stage 4: MD ligand parameterization (optional)
+# conda install -c conda-forge openmmforcefields openff-toolkit -y
 
 # REINVENT4 — RL-based molecular optimization (optional)
 # git clone https://github.com/MolecularAI/REINVENT4.git
-# cd REINVENT4 && python install.py cu126
+# cd REINVENT4 && pip install -e .
