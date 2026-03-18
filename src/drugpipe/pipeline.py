@@ -423,10 +423,10 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    log_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+    logging.basicConfig(level=log_level, format=log_fmt)
 
     overrides: Dict[str, Any] = {}
     if args.stages is not None:
@@ -447,7 +447,73 @@ def main() -> None:
             overrides.setdefault("lead_optimization", {})["pdb_id"] = ""
 
     cfg = load_config(config_path=args.config, overrides=overrides)
+
+    # --- Set up file logging ---
+    _setup_file_logging(cfg, log_level, log_fmt)
+
     run_pipeline(cfg)
+
+
+# ======================================================================
+# File logging
+# ======================================================================
+
+def _setup_file_logging(
+    cfg: Dict[str, Any], level: int, fmt: str,
+) -> None:
+    """Create log files: a full debug log and a concise summary log.
+
+    Log directory: ``<out_dir>/logs/``
+    Naming: ``<date>_<disease>_<target>_full.log`` / ``..._summary.log``
+    """
+    import datetime
+
+    out_dir = get_out_dir(cfg)
+    log_dir = out_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    disease = cfg.get("target_discovery", {}).get("disease", "")
+    target = cfg.get("target_to_hit", {}).get("target_chembl_id", "")
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    parts = [ts]
+    if disease:
+        parts.append(_disease_slug(disease))
+    if target:
+        parts.append(target)
+    stem = "_".join(parts)
+
+    root_logger = logging.getLogger()
+
+    full_path = log_dir / f"{stem}_full.log"
+    fh = logging.FileHandler(full_path, encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(fmt))
+    root_logger.addHandler(fh)
+
+    summary_path = log_dir / f"{stem}_summary.log"
+    sh = logging.FileHandler(summary_path, encoding="utf-8")
+    sh.setLevel(logging.WARNING)
+    sh.setFormatter(logging.Formatter(fmt))
+
+    class _InfoKeywordFilter(logging.Filter):
+        _KEYWORDS = (
+            "Stage", "complete", "Selected target", "PIPELINE",
+            "Training metrics", "Fold", "RMSE", "Docking progress",
+            "Docking complete", "MD simulation", "MM-GBSA",
+            "Hit candidates", "Lead candidates", "Optimized leads",
+            "saved", "Loaded cached", "ESMFold",
+        )
+        def filter(self, record: logging.LogRecord) -> bool:
+            if record.levelno >= logging.WARNING:
+                return True
+            return any(kw in record.getMessage() for kw in self._KEYWORDS)
+
+    sh.addFilter(_InfoKeywordFilter())
+    root_logger.addHandler(sh)
+
+    logger.info("Full log: %s", full_path)
+    logger.info("Summary log: %s", summary_path)
 
 
 if __name__ == "__main__":

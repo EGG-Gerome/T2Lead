@@ -4,8 +4,13 @@
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
+
+conda_lib = Path(sys.executable).resolve().parents[1] / "lib"
+if conda_lib.exists():
+    os.environ["LD_LIBRARY_PATH"] = str(conda_lib) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
 
 # 将 src 加入路径以便导入 drugpipe
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
