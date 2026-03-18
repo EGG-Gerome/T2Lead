@@ -289,7 +289,7 @@ class ModelTrainer:
         return self._predict_torch(self.mlp, self._device, X)
 
     @staticmethod
-    def _predict_torch(model: Any, devge lice: Any, X: np.ndarray, batch_size: int = 4096) -> np.ndarray:
+    def _predict_torch(model: Any, device: Any, X: np.ndarray, batch_size: int = 4096) -> np.ndarray:
         model.eval()
         preds = []
         with torch.no_grad():
