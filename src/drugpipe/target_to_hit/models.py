@@ -74,8 +74,11 @@ class ModelTrainer:
         self.mlp_lr = float(mcfg.get("mlp_lr", 2e-3))
         self.mlp_wd = float(mcfg.get("mlp_weight_decay", 1e-4))
 
+        # Device: auto | cuda | mps | cpu
+        self._device_cfg = cfg.get("pipeline", {}).get("device", "auto")
+
         self.rf: Optional[RandomForestRegressor] = None
-        self.mlp: Optional[Any] = None  # torch model or None / Torch 模型或 None
+        self.mlp: Optional[Any] = None
         self._device: Optional[Any] = None
 
     # ------------------------------------------------------------------
@@ -136,8 +139,9 @@ class ModelTrainer:
     def _train_mlp(
         self, X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.ndarray,
     ) -> Tuple[Any, float]:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = _resolve_torch_device(self._device_cfg)
         self._device = device
+        logger.info("  MLP device: %s", device)
 
         ds = torch.utils.data.TensorDataset(
             torch.tensor(X_tr, dtype=torch.float32),
@@ -177,6 +181,29 @@ class ModelTrainer:
                 t = torch.tensor(X[i : i + batch_size], dtype=torch.float32, device=device)
                 preds.append(model(t).detach().cpu().numpy())
         return np.concatenate(preds)
+
+
+def _resolve_torch_device(device_cfg: str) -> "torch.device":
+    """Resolve config device string to a torch.device.
+
+    Supported values: ``"auto"``, ``"cuda"``, ``"mps"``, ``"cpu"``.
+    """
+    d = device_cfg.lower().strip()
+    if d == "cuda":
+        return torch.device("cuda")
+    if d == "mps":
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        logger.warning("MPS requested but not available, falling back to CPU.")
+        return torch.device("cpu")
+    if d == "cpu":
+        return torch.device("cpu")
+    # auto
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:

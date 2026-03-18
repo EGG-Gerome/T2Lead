@@ -14,3 +14,18 @@ python-dotenv
 
 # Hit-to-Lead analog generation (optional)
 # crem
+
+# Stage 4: Lead Optimization — Molecular Docking (optional)
+# pip install vina meeko
+# vina
+# meeko
+
+# Stage 4: Lead Optimization — MD Simulation (optional)
+# conda install -c conda-forge openmm pdbfixer mdtraj
+# openmm
+# pdbfixer
+# mdtraj
+
+# REINVENT4 — RL-based molecular optimization (optional)
+# git clone https://github.com/MolecularAI/REINVENT4.git
+# cd REINVENT4 && python install.py cu126

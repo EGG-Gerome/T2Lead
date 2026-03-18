@@ -2,12 +2,12 @@
 
 [中文说明 (README_zh.md)](README_zh.md)
 
-**Target → Hit → Lead**: an end-to-end, modular drug discovery pipeline that takes a disease name as input and outputs ranked lead candidate molecules.
+**Target → Hit → Lead → Optimized Lead**: an end-to-end, modular drug discovery pipeline that takes a disease name as input and outputs ranked, experimentally-validated lead candidate molecules.
 
 ```
-Disease name ──► Target Discovery ──► Target-to-Hit ──► Hit-to-Lead ──► Lead Candidates CSV
- (string)        (OpenTargets /       (ChEMBL crawl /   (Scaffold /
-                  OriGene)             ML + VS + ADMET)   CReM / REINVENT4)
+Disease name ──► Target Discovery ──► Target-to-Hit ──► Hit-to-Lead ──► Lead Optimization ──► Optimized Leads CSV
+ (string)        (OpenTargets /       (ChEMBL crawl /   (Scaffold /      (Docking / ADMET /
+                  OriGene)             ML + VS + ADMET)   CReM / REINVENT4) MD / MM-GBSA)
 ```
 
 ## Quick I/O Summary
@@ -15,8 +15,9 @@ Disease name ──► Target Discovery ──► Target-to-Hit ──► Hit-to
 | Stage | Input | Output |
 |---|---|---|
 | **1 — Target Discovery** | Disease name `str` (e.g. `"lung cancer"`) or EFO ID (e.g. `EFO_0001378`) | Ranked target list: `chembl_id, symbol, name, score, source` |
-| **2 — Target to Hit** | ChEMBL target ID `str` (e.g. `"CHEMBL204"`) | `data/final_hit_candidates.csv` — columns: `molecule_chembl_id, canonical_smiles, pred_pIC50_ens, pred_IC50_nM_ens, QED, MW, cLogP, TPSA, HBD, HBA, RotB, Rings, HeavyAtoms` |
-| **3 — Hit to Lead** | Hit CSV from Stage 2 (must contain `canonical_smiles`, `pred_pIC50_ens`) | `data/final_lead_candidates.csv` — columns: `canonical_smiles, source_smiles, origin, pred_pIC50_ens, QED, mpo_score, admet_pass, HasAlert, scaffold_smi, cluster_id` |
+| **2 — Target to Hit** | ChEMBL target ID `str` (e.g. `"CHEMBL204"`) | `data/<disease>/final_hit_candidates.csv` |
+| **3 — Hit to Lead** | Hit CSV from Stage 2 (must contain `canonical_smiles`, `pred_pIC50_ens`) | `data/<disease>/final_lead_candidates.csv` |
+| **4 — Lead Optimization** | Lead CSV from Stage 3 + PDB ID for target protein | `data/<disease>/optimized_leads.csv` |
 
 ## Important: What Happens Under the Hood
 
@@ -24,13 +25,16 @@ This is **NOT** a pre-trained model you just run. Here's what each stage actuall
 
 - **Stage 1** queries the OpenTargets public API online (seconds).
 - **Stage 2** crawls ChEMBL to download molecule + IC50 data first (can take hours depending on `MAX_MOLECULES` / `MAX_ACTIVITIES` settings), then trains Random Forest + MLP models **on the fly** using the crawled data for your specific target. No pre-built model — it learns from real bioactivity data each run.
-- **Stage 3** analyzes scaffolds and clusters (instant), generates analogs via CReM if a fragment DB is provided, scores everything with MPO.
+- **Stage 3** analyzes scaffolds and clusters (instant), generates analogs via CReM if a fragment DB is provided, scores everything with MPO, and optionally runs REINVENT4 RL-based molecular generation.
+- **Stage 4** prepares the target protein structure (PDB), docks all lead candidates with AutoDock Vina, runs enhanced ADMET profiling (SA score, hERG, CYP), and optionally performs MD simulation + MM-GBSA binding energy calculation with OpenMM (GPU-accelerated).
 
 ## Features
 
 - **Stage 1 — Target Discovery**: Query OpenTargets GraphQL API by disease name or EFO ID; optionally merge results with an OriGene AI agent for LLM-assisted target recommendation.
-- **Stage 2 — Target to Hit**: Crawl ChEMBL molecules + IC50 activities (with checkpoint resume), build pIC50 datasets, train Random Forest + Torch MLP regressors, run virtual screening on the full molecule library, and filter by ADMET rules / QED / PAINS alerts.
+- **Stage 2 — Target to Hit**: Crawl ChEMBL molecules + IC50 activities (with checkpoint resume), build pIC50 datasets, train Random Forest + Torch MLP regressors (GPU-accelerated), run virtual screening on the full molecule library, and filter by ADMET rules / QED / PAINS alerts.
 - **Stage 3 — Hit to Lead**: Murcko scaffold SAR analysis, Butina diversity clustering, CReM-based analog enumeration, multi-parameter optimization (MPO) scoring, and optional REINVENT4 RL-based molecular generation.
+- **Stage 4 — Lead Optimization**: Protein preparation (RCSB PDB fetch + PDBFixer), molecular docking (AutoDock Vina), enhanced ADMET profiling (SA score, hERG toxicophore, CYP inhibition risk, Veber rules), optional MD simulation + MM-GBSA (OpenMM with CUDA GPU support), and composite scoring.
+- **GPU Support**: Automatically detects CUDA (NVIDIA), MPS (Apple Silicon), or falls back to CPU. Configurable via `pipeline.device`.
 - **Configurable**: Single YAML config controls all parameters; environment variables override any field.
 - **Modular**: Each stage can run independently or chain together via the pipeline orchestrator.
 
@@ -60,6 +64,12 @@ T2Lead/
 │   │   ├── mpo.py
 │   │   ├── reinvent_bridge.py
 │   │   └── lead_ranker.py
+│   ├── lead_optimization/         # Stage 4
+│   │   ├── protein_prep.py
+│   │   ├── docking.py
+│   │   ├── admet_deep.py
+│   │   ├── md_simulation.py
+│   │   └── lead_optimizer.py
 │   └── utils/                     # Shared utilities
 │       ├── chem.py
 │       ├── io.py
@@ -78,6 +88,7 @@ T2Lead/
 
 - Python >= 3.9
 - RDKit (install via conda or pip)
+- NVIDIA GPU recommended (CUDA) for MLP training + MD simulation
 
 ### Steps
 
@@ -87,7 +98,7 @@ cd T2Lead
 
 # 2. Create a conda environment (recommended for RDKit)
 conda create -n t2lead python=3.11 -y
-conda init && source ~/.bashrc	# # Run only after first Conda installation
+conda init && source ~/.bashrc	# Run only after first Conda installation
 conda activate t2lead
 conda install -c conda-forge rdkit -y
 
@@ -103,8 +114,17 @@ pip install torch
 # 6. (Optional) CReM for analog generation in Stage 3
 pip install crem
 bash scripts/download_crem_db.sh
-# By default this downloads ~1.9 GB: chembl33_sa25_f5.db.gz
-# Optional: choose another DB, e.g. bash scripts/download_crem_db.sh chembl33_sa2_f5
+
+# 7. (Optional) REINVENT4 for RL-based molecular generation in Stage 3
+git clone https://github.com/MolecularAI/REINVENT4.git
+cd REINVENT4 && pip install -e . && cd ..
+# Download prior models from REINVENT4 releases or train your own
+
+# 8. (Optional) Molecular docking in Stage 4
+pip install vina meeko gemmi
+
+# 9. (Optional) MD simulation in Stage 4 (GPU-accelerated)
+conda install -c conda-forge openmm pdbfixer mdtraj -y
 ```
 
 ### Environment Variables
@@ -120,11 +140,11 @@ cp .env.example .env
 ### Full Pipeline
 
 ```bash
-# Run all three stages for a disease
-python scripts/run_pipeline.py --disease "lung cancer"
+# Run all four stages for a disease
+python scripts/run_pipeline.py --disease "breast cancer" -v
 
 # Run with a specific target (skip Stage 1)
-python scripts/run_pipeline.py --target CHEMBL204 --stages target_to_hit hit_to_lead
+python scripts/run_pipeline.py --target CHEMBL4005 --stages target_to_hit hit_to_lead lead_optimization
 
 # Custom config + verbose logging
 python scripts/run_pipeline.py -c my_config.yaml -v
@@ -137,24 +157,28 @@ python scripts/run_pipeline.py -c my_config.yaml -v
 python scripts/run_stage.py target_discovery --disease "breast cancer"
 
 # Stage 2: Target to Hit
-python scripts/run_stage.py target_to_hit --target CHEMBL1862
+python scripts/run_stage.py target_to_hit --target CHEMBL4005
 
-# Stage 3: Hit to Lead (reads hits from data/final_hit_candidates.csv)
+# Stage 3: Hit to Lead
 python scripts/run_stage.py hit_to_lead
 
-# Stage 3 with a custom hits file
-python scripts/run_stage.py hit_to_lead --hits-csv data/final_hit_candidates.csv
+# Stage 4: Lead Optimization (reads leads from data/<disease>/final_lead_candidates.csv)
+python scripts/run_stage.py lead_optimization
 ```
 
 ### As a Python Library
 
 ```python
 from drugpipe.config import load_config
-from drugpipe.pipeline import run_target_discovery, run_target_to_hit, run_hit_to_lead
+from drugpipe.pipeline import (
+    run_target_discovery, run_target_to_hit,
+    run_hit_to_lead, run_lead_optimization,
+)
 
 cfg = load_config(overrides={
-    "target_discovery": {"disease": "liver cancer"},
-    "pipeline": {"stages": ["target_discovery", "target_to_hit", "hit_to_lead"]},
+    "target_discovery": {"disease": "breast cancer"},
+    "pipeline": {"stages": ["target_discovery", "target_to_hit", "hit_to_lead", "lead_optimization"]},
+    "lead_optimization": {"pdb_id": "4JPS"},
 })
 
 # Stage 1
@@ -172,6 +196,9 @@ df_leads = run_hit_to_lead(
     model_predict_fn=trainer.predict if trainer else None,
     featurizer_fn=featurizer.transform if featurizer else None,
 )
+
+# Stage 4
+df_optimized = run_lead_optimization(cfg, df_leads)
 ```
 
 ## Configuration
@@ -180,8 +207,9 @@ All parameters live in `configs/default_config.yaml`. Key sections:
 
 | Section | What it controls |
 |---|---|
-| `pipeline.stages` | Which stages to run (`target_discovery`, `target_to_hit`, `hit_to_lead`) |
+| `pipeline.stages` | Which stages to run (`target_discovery`, `target_to_hit`, `hit_to_lead`, `lead_optimization`) |
 | `pipeline.seed` | Global random seed |
+| `pipeline.device` | Compute device: `auto`, `cuda`, `mps`, `cpu` |
 | `target_discovery.disease` | Input disease name or EFO ID |
 | `target_discovery.origene.enabled` | Whether to call a local OriGene service |
 | `target_to_hit.chembl.*` | ChEMBL crawl parameters (page_limit, max records, etc.) |
@@ -189,13 +217,18 @@ All parameters live in `configs/default_config.yaml`. Key sections:
 | `target_to_hit.filter.*` | ADMET rule thresholds, pIC50 cutoff, QED minimum |
 | `hit_to_lead.analog_gen.*` | CReM analog generation settings |
 | `hit_to_lead.mpo.*` | MPO weight distribution |
-| `hit_to_lead.reinvent4.*` | Optional REINVENT4 RL optimization |
+| `hit_to_lead.reinvent4.*` | REINVENT4 RL optimization (paths, steps, batch size) |
+| `lead_optimization.pdb_id` | RCSB PDB ID for target protein structure |
+| `lead_optimization.docking.*` | AutoDock Vina docking parameters |
+| `lead_optimization.admet_deep.*` | Enhanced ADMET profiling settings |
+| `lead_optimization.md_simulation.*` | OpenMM MD simulation settings |
+| `lead_optimization.scoring.*` | Composite scoring weights |
 
 Override any value via environment variables with the `DP_` prefix:
 
 ```bash
 export DP_TARGET_TO_HIT__CHEMBL__MAX_ACTIVITIES=50000
-export DP_HIT_TO_LEAD__MPO__W_POTENCY=0.5
+export DP_LEAD_OPTIMIZATION__PDB_ID=4JPS
 ```
 
 ## Stage Details
@@ -207,27 +240,24 @@ export DP_HIT_TO_LEAD__MPO__W_POTENCY=0.5
 **What happens**:
 - Queries OpenTargets Platform GraphQL API for disease-target associations
 - Maps Ensembl gene IDs to ChEMBL target IDs
-- Optionally merges OriGene AI recommendations (requires separate OriGene deployment)
+- Optionally merges OriGene AI recommendations (requires separate [OriGene](https://github.com/GENTEL-lab/OriGene) deployment)
 
 **Output**: ranked list of ChEMBL target IDs with association scores (printed + passed to Stage 2).
 
-**Prerequisites**: internet connection only. No local data or models required.
-
 ### Stage 2: Target to Hit
 
-**Input**: a ChEMBL target ID string (from Stage 1 or user-specified, e.g. `"CHEMBL204"`).
+**Input**: a ChEMBL target ID string (from Stage 1 or user-specified, e.g. `"CHEMBL4005"`).
 
 **What happens**:
-1. **ChEMBL Crawl** — download molecules (SMILES) and IC50 activity data via REST API, with checkpoint resume (hours depending on scale)
-2. **Dataset Build** — join molecules + activities, convert IC50 to pIC50, aggregate per-molecule duplicates
-3. **Featurize** — compute 2048-bit Morgan fingerprints (ECFP4)
-4. **Train** — Random Forest regressor + optional Torch MLP, trained on crawled data; ensemble prediction
-5. **Virtual Screen** — score all crawled molecules with the trained model
-6. **ADMET Filter** — Lipinski rules, TPSA, QED >= 0.6, PAINS/Brenk structural alerts, pIC50 >= 6.0
+1. **ChEMBL Crawl** — download molecules (SMILES) and IC50 activity data via REST API, with checkpoint resume
+2. **Target Selection** — automatically picks the highest-scored target with enough IC50 data (>= 200 records)
+3. **Dataset Build** — join molecules + activities, convert IC50 to pIC50, aggregate per-molecule duplicates
+4. **Featurize** — compute 2048-bit Morgan fingerprints (ECFP4)
+5. **Train** — Random Forest regressor + Torch MLP (GPU-accelerated); ensemble prediction
+6. **Virtual Screen** — score all crawled molecules with the trained model
+7. **ADMET Filter** — Lipinski rules, TPSA, QED >= 0.6, PAINS/Brenk structural alerts, pIC50 >= 6.0
 
-**Output**: `data/final_hit_candidates.csv`
-
-**Prerequisites**: internet connection for ChEMBL API. Models are trained on the fly — no pre-trained weights needed.
+**Output**: `data/<disease>/final_hit_candidates.csv`
 
 ### Stage 3: Hit to Lead
 
@@ -238,15 +268,27 @@ export DP_HIT_TO_LEAD__MPO__W_POTENCY=0.5
 2. **Diversity Clustering** — Butina clustering on Tanimoto distance
 3. **Analog Generation** — CReM fragment mutation to expand chemical space (requires CReM + fragment DB)
 4. **MPO Scoring** — weighted: 40% potency + 25% QED + 20% ADMET + 15% novelty
-5. **Lead Ranking** — final sorted output, top-N
+5. **REINVENT4 RL** — optional reinforcement-learning molecular generation with potency predictor as reward
+6. **Lead Ranking** — final sorted output, top-N
 
-**Output**: `data/final_lead_candidates.csv`
+**Output**: `data/<disease>/final_lead_candidates.csv`
 
-**Prerequisites**: RDKit only for scaffold/clustering/MPO. CReM + fragment DB for analog generation (optional). REINVENT4 for RL optimization (optional).
+### Stage 4: Lead Optimization
+
+**Input**: lead candidates CSV from Stage 3 + target protein PDB ID.
+
+**What happens**:
+1. **Protein Preparation** — fetch PDB from RCSB, fix with PDBFixer (add missing atoms, hydrogens), auto-detect binding site from co-crystallized ligand, convert to PDBQT
+2. **Molecular Docking** — dock all leads with AutoDock Vina (CPU multi-threaded), score binding affinity (kcal/mol)
+3. **Enhanced ADMET** — Synthetic Accessibility score, hERG cardiotoxicity SMARTS, CYP3A4/2D6 inhibition risk, Veber oral bioavailability rules, composite risk score
+4. **MD Simulation** — (top-N only) OpenMM implicit-solvent energy minimization + MM-GBSA binding energy (GPU-accelerated via CUDA)
+5. **Composite Scoring** — weighted combination of docking score, ADMET risk, MD binding energy → final ranking
+
+**Output**: `data/<disease>/optimized_leads.csv`
 
 ## Output Files
 
-All outputs go to `data/` (configurable via `pipeline.out_dir`):
+All outputs go to `data/<disease>/` (configurable via `pipeline.out_dir`):
 
 | File | Description | Produced by |
 |---|---|---|
@@ -258,30 +300,37 @@ All outputs go to `data/` (configurable via `pipeline.out_dir`):
 | `h2l_scaffold_summary.csv` | Scaffold SAR summary | Stage 3 |
 | `h2l_cluster_summary.csv` | Diversity cluster summary | Stage 3 |
 | `final_lead_candidates.csv` | Final ranked lead candidates | Stage 3 |
+| `<PDB_ID>.pdb` | Downloaded protein structure | Stage 4 |
+| `<PDB_ID>_receptor.pdbqt` | Prepared receptor for docking | Stage 4 |
+| `docking_poses/` | Best docking poses per molecule | Stage 4 |
+| `optimized_leads.csv` | Final optimized candidates with all scores | Stage 4 |
 
 ## External Dependencies
 
 | Component | Required? | Install | Used in |
 |---|---|---|---|
 | RDKit | Yes | `conda install -c conda-forge rdkit` | All stages |
-| PyTorch | Optional | `pip install torch` | Stage 2 (MLP model) |
+| PyTorch | Optional | `pip install torch` | Stage 2 (MLP), Stage 3 (REINVENT4) |
 | CReM | Optional | `pip install crem` + [fragment DB](https://github.com/DrrDom/crem#databases) | Stage 3 (analog gen) |
-| REINVENT4 | Optional | See [REINVENT4](https://github.com/MolecularAI/REINVENT4) | Stage 3 (RL optimization) |
+| REINVENT4 | Optional | `git clone` + `pip install -e .` from [REINVENT4](https://github.com/MolecularAI/REINVENT4) | Stage 3 (RL optimization) |
+| AutoDock Vina | Optional | `pip install vina meeko gemmi` | Stage 4 (docking) |
+| OpenMM | Optional | `conda install -c conda-forge openmm pdbfixer mdtraj` | Stage 4 (MD simulation) |
 | OriGene | Optional | See [OriGene](https://github.com/GENTEL-lab/OriGene) | Stage 1 (AI target rec.) |
+
+All optional dependencies degrade gracefully — if not installed, the corresponding step is skipped with a warning.
 
 ## Acknowledgements & References
 
-This project was built by studying and integrating ideas from the following projects. We gratefully acknowledge them:
-
 | Stage | Reference project | What we learned / borrowed |
 |---|---|---|
-| **Stage 1** | [OriGene](https://github.com/GENTEL-lab/OriGene) (GENTEL-lab, CC-BY-NC-SA 4.0) | Multi-agent AI approach to therapeutic target discovery; our `origene_client.py` provides an integration wrapper for their service. The idea of combining data-driven (OpenTargets) + AI-driven (LLM) target recommendations comes from their architecture. |
+| **Stage 1** | [OriGene](https://github.com/GENTEL-lab/OriGene) (GENTEL-lab, CC-BY-NC-SA 4.0) | Multi-agent AI approach to therapeutic target discovery; our `origene_client.py` provides an integration wrapper for their service. |
 | **Stage 1** | [OpenTargets Platform](https://platform.opentargets.org/) | Public GraphQL API for disease-target associations, genetic evidence, and tractability data. |
-| **Stage 2** | previous ChEMBL-based workflows and tutorials | The original single-file ChEMBL workflow (API crawl → IC50 dataset → Morgan FP → RF/MLP → virtual screening → ADMET/QED filter) was refactored into 6 modular classes. Core algorithm logic (pIC50 conversion, fingerprint featurization, RF+MLP ensemble, Lipinski/PAINS filtering) originates from this script. |
 | **Stage 2** | [ChEMBL REST API](https://www.ebi.ac.uk/chembl/) | Public compound and bioactivity database maintained by EMBL-EBI. |
 | **Stage 3** | [CReM](https://github.com/DrrDom/crem) (Polishchuk, 2020) | Context-aware fragment replacement for analog enumeration. |
 | **Stage 3** | [REINVENT4](https://github.com/MolecularAI/REINVENT4) (MolecularAI, Apache 2.0) | RL-based generative molecular design; our bridge module generates REINVENT4 configs and parses its output. |
-| **Stage 3** | [RDKit](https://www.rdkit.org/) | Murcko scaffold decomposition, Butina clustering, PAINS/Brenk filter catalogs, QED, molecular descriptors. |
+| **Stage 4** | [AutoDock Vina](https://github.com/ccsb-scripps/AutoDock-Vina) (Scripps Research) | Molecular docking engine with Python bindings. |
+| **Stage 4** | [OpenMM](https://openmm.org/) (Stanford, MIT License) | GPU-accelerated molecular dynamics toolkit for MM-GBSA binding energy calculations. |
+| **All** | [RDKit](https://www.rdkit.org/) | Murcko scaffolds, Butina clustering, PAINS/Brenk filters, QED, SA score, molecular descriptors. |
 
 ## Contributors
 

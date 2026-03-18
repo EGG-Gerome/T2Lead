@@ -9,8 +9,10 @@ pipeline:
     - target_discovery
     - target_to_hit
     - hit_to_lead
+    - lead_optimization
   seed: 42
   out_dir: ./data
+  device: auto                       # auto | cuda | mps | cpu (for MLP training + OpenMM MD)
 
 # -------------------------------------------------------------------
 # Stage 1 — Target Discovery
@@ -25,7 +27,10 @@ target_discovery:
     min_score: 0.1
 
   origene:
-    enabled: false
+    enabled: false                   # requires local OriGene deployment:
+                                     #   git clone https://github.com/GENTEL-lab/OriGene
+                                     #   cd OriGene && follow their README to start server
+                                     #   then set enabled: true and server_url below
     server_url: http://127.0.0.1:8788
     mode: quick                      # quick | detailed
 
@@ -100,11 +105,50 @@ hit_to_lead:
     w_novelty: 0.15
 
   reinvent4:
-    enabled: false
-    reinvent_path: ""
-    prior_path: ""
+    enabled: true                    # set to true to enable RL-based molecular optimization
+    reinvent_path: "/root/miniconda3/envs/t2lead/bin/reinvent"
+    prior_path: "/root/REINVENT4/priors/reinvent.prior"
     batch_size: 128
     n_steps: 100
 
   output:
     top_n_leads: 50
+
+# -------------------------------------------------------------------
+# Stage 4 — Lead Optimization (docking, enhanced ADMET, MD simulation)
+# -------------------------------------------------------------------
+lead_optimization:
+  enabled: true
+  pdb_id: "4JPS"                      # RCSB PDB ID for target protein (PIK3CA / PI3Kα for breast cancer)
+  binding_site:
+    center: [0.0, 0.0, 0.0]
+    box_size: [25.0, 25.0, 25.0]
+    auto_detect: true                # auto-detect from co-crystallized ligand
+
+  docking:
+    enabled: true
+    exhaustiveness: 8                # lower = faster; 8 is standard, 32 for production
+    n_poses: 3
+    n_cpus: 0                        # 0 = auto-detect; Vina uses CPU multi-threading
+    score_threshold: -6.0            # kcal/mol; discard scores worse than this
+
+  admet_deep:
+    enabled: true
+    sa_score_max: 6.0                # synthetic accessibility cutoff (1=easy, 10=hard)
+    herg_filter: true
+
+  md_simulation:
+    enabled: true
+    top_n_for_md: 10                 # only run MD on top-N by docking score
+    equilibration_ps: 100
+    production_ns: 1.0
+    gb_model: "OBC2"                 # OBC1, OBC2, GBn, GBn2
+
+  scoring:
+    w_docking: 0.35
+    w_admet: 0.20
+    w_md_energy: 0.30
+    w_stability: 0.15
+
+  output:
+    top_n_optimized: 10

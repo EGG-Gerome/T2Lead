@@ -68,11 +68,20 @@ TanimotoSimilarity.weight = 0.6
 TanimotoSimilarity.params.radius = 2
 TanimotoSimilarity.params.use_counts = false
 
+{predictive_model_block}
+
 [diversity_filter]
 type = "IdenticalMurckoScaffold"
 bucket_size = 25
 minscore = 0.4
 minsimilarity = 0.4
+"""
+
+
+_PREDICTIVE_MODEL_BLOCK = """\
+[stage.0.scoring.component.3]
+ExternalProcess.endpoint = ["{scoring_script}"]
+ExternalProcess.weight = 0.8
 """
 
 
@@ -89,14 +98,23 @@ class Reinvent4Bridge:
         self.n_steps = int(r4.get("n_steps", 100))
 
     # ------------------------------------------------------------------
-    def run(self, df_hits: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
+    def run(
+        self,
+        df_hits: pd.DataFrame,
+        out_dir: Path,
+        model_predict_fn=None,
+        featurizer_fn=None,
+    ) -> pd.DataFrame:
         """
         Run REINVENT4 optimization seeded with top hit SMILES.
+
+        If *model_predict_fn* and *featurizer_fn* are provided, a scoring
+        script is generated so REINVENT4 can use the pIC50 predictor as an
+        RL reward component.
 
         Returns a DataFrame of generated SMILES (``canonical_smiles``,
         ``origin="reinvent4"``).  Returns empty DataFrame on skip/failure.
         """
-        # 返回生成 SMILES 的 DataFrame（canonical_smiles、origin="reinvent4"）；跳过或失败时返回空 DataFrame。
         if not self.enabled:
             logger.info("REINVENT4 bridge disabled.")
             return pd.DataFrame()
@@ -111,6 +129,12 @@ class Reinvent4Bridge:
 
         ref_smi = df_hits["canonical_smiles"].iloc[0] if len(df_hits) > 0 else "c1ccccc1"
 
+        pred_block = ""
+        if model_predict_fn is not None and featurizer_fn is not None:
+            scoring_script = self._write_scoring_script(out_dir, model_predict_fn, featurizer_fn)
+            if scoring_script:
+                pred_block = _PREDICTIVE_MODEL_BLOCK.format(scoring_script=str(scoring_script))
+
         output_csv = out_dir / "reinvent4_output.csv"
         chkpt_file = out_dir / "reinvent4_agent.ckpt"
         toml_content = _TOML_TEMPLATE.format(
@@ -120,6 +144,7 @@ class Reinvent4Bridge:
             n_steps=self.n_steps,
             chkpt_file=str(chkpt_file),
             reference_smiles=ref_smi,
+            predictive_model_block=pred_block,
         )
 
         toml_path = out_dir / "reinvent4_config.toml"
@@ -144,6 +169,50 @@ class Reinvent4Bridge:
             return pd.DataFrame()
 
         return self._parse_output(output_csv)
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _write_scoring_script(
+        out_dir: Path,
+        model_predict_fn,
+        featurizer_fn,
+    ) -> Optional[Path]:
+        """Write a thin Python script that REINVENT4 ExternalProcess can call.
+
+        The script reads SMILES from stdin, computes predicted pIC50 via the
+        serialised model artifacts, and writes scores to stdout.
+        """
+        try:
+            import joblib
+            model_pkl = out_dir / "reinvent4_scorer_model.pkl"
+            feat_pkl = out_dir / "reinvent4_scorer_feat.pkl"
+            joblib.dump(model_predict_fn, model_pkl)
+            joblib.dump(featurizer_fn, feat_pkl)
+        except Exception as exc:
+            logger.warning("Could not serialise scoring model for REINVENT4: %s", exc)
+            return None
+
+        script = out_dir / "reinvent4_scorer.py"
+        script.write_text(
+            f"""#!/usr/bin/env python
+\"\"\"REINVENT4 external scoring script — predicted pIC50.\"\"\"
+import sys, joblib, numpy as np
+model = joblib.load("{model_pkl}")
+feat  = joblib.load("{feat_pkl}")
+smiles = [line.strip() for line in sys.stdin if line.strip()]
+if not smiles:
+    sys.exit(0)
+X = feat(smiles)
+preds = model(X)
+preds_norm = np.clip((preds - 5.0) / 5.0, 0.0, 1.0)
+for v in preds_norm:
+    print(f"{{v:.4f}}")
+""",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        logger.info("REINVENT4 scoring script written: %s", script)
+        return script
 
     # ------------------------------------------------------------------
     @staticmethod

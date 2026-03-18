@@ -1,5 +1,5 @@
-"""Three-stage pipeline orchestrator: Target Discovery → T2H → H2L."""
-# 三阶段流水线编排器：靶点发现 → 靶点到先导化合物 → 先导化合物优化。
+"""Four-stage pipeline orchestrator: Target Discovery → T2H → H2L → Lead Optimization."""
+# 四阶段流水线编排器：靶点发现 → 靶点到苗头 → 苗头到先导 → 先导优化。
 
 from __future__ import annotations
 
@@ -172,10 +172,10 @@ def run_hit_to_lead(
     ranker = LeadRanker(cfg, out_dir)
     df_leads = ranker.run(df_hits, model_predict_fn=model_predict_fn, featurizer_fn=featurizer_fn)
 
-    # Optional REINVENT4 enrichment / 可选 REINVENT4  enrichment
+    # Optional REINVENT4 enrichment / 可选 REINVENT4 强化学习 enrichment
     r4 = Reinvent4Bridge(cfg)
     if r4.enabled:
-        df_r4 = r4.run(df_hits, out_dir)
+        df_r4 = r4.run(df_hits, out_dir, model_predict_fn=model_predict_fn, featurizer_fn=featurizer_fn)
         if not df_r4.empty:
             logger.info("Merging %d REINVENT4 molecules into lead pool.", len(df_r4))
             df_leads = pd.concat([df_leads, df_r4], ignore_index=True).drop_duplicates(
@@ -184,6 +184,22 @@ def run_hit_to_lead(
 
     logger.info("Stage 3 complete — %d lead candidates.", len(df_leads))
     return df_leads
+
+
+def run_lead_optimization(
+    cfg: Dict[str, Any],
+    df_leads: pd.DataFrame,
+) -> pd.DataFrame:
+    """Stage 4: protein prep → docking → enhanced ADMET → MD → ranking."""
+    # 阶段四：蛋白准备 → 对接 → 增强 ADMET → MD 模拟 → 综合排序。
+    from drugpipe.lead_optimization.lead_optimizer import LeadOptimizer
+
+    out_dir = get_out_dir(cfg)
+    optimizer = LeadOptimizer(cfg, out_dir)
+    df_optimized = optimizer.run(df_leads)
+
+    logger.info("Stage 4 complete — %d optimized lead candidates.", len(df_optimized))
+    return df_optimized
 
 
 # ======================================================================
@@ -221,6 +237,7 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
 
     target_chembl_id: Optional[str] = None
     df_hits: Optional[pd.DataFrame] = None
+    df_leads: Optional[pd.DataFrame] = None
     trainer = None
     featurizer = None
 
@@ -244,6 +261,14 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         logger.info("=" * 60)
 
         if all_targets and "target_discovery" in stages:
+            # Crawl first so _pick_viable_target can check actual IC50 counts
+            act_csv = base_out_dir / "activities_ic50.csv"
+            if not act_csv.exists():
+                logger.info("Crawling ChEMBL data before target selection ...")
+                from drugpipe.target_to_hit.chembl_api import ChEMBLCrawler
+                crawler = ChEMBLCrawler(cfg, base_out_dir)
+                crawler.crawl_molecules()
+                crawler.crawl_activities()
             target_chembl_id = _pick_viable_target(cfg, all_targets, base_out_dir)
 
         # Crawl data is shared (base_out_dir); per-disease outputs go to run_out_dir
@@ -270,7 +295,24 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         cfg_s3 = _override_out_dir(cfg, run_out_dir)
         predict_fn = trainer.predict if trainer else None
         feat_fn = featurizer.transform if featurizer else None
-        run_hit_to_lead(cfg_s3, df_hits, model_predict_fn=predict_fn, featurizer_fn=feat_fn)
+        df_leads = run_hit_to_lead(cfg_s3, df_hits, model_predict_fn=predict_fn, featurizer_fn=feat_fn)
+
+    # Stage 4
+    if "lead_optimization" in stages:
+        logger.info("=" * 60)
+        logger.info("STAGE 4: Lead Optimization")
+        logger.info("=" * 60)
+        if df_leads is None:
+            leads_csv = run_out_dir / "final_lead_candidates.csv"
+            if leads_csv.exists():
+                df_leads = pd.read_csv(leads_csv)
+                logger.info("Loaded leads from %s (%d rows)", leads_csv, len(df_leads))
+            else:
+                logger.error("No lead candidates available. Run Stage 3 first.")
+                return
+
+        cfg_s4 = _override_out_dir(cfg, run_out_dir)
+        run_lead_optimization(cfg_s4, df_leads)
 
     logger.info("=" * 60)
     logger.info("PIPELINE COMPLETE")
