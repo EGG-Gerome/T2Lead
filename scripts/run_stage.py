@@ -24,6 +24,12 @@ def main() -> None:
     parser.add_argument("-c", "--config", default=None, help="Custom YAML config.")
     parser.add_argument("--disease", default=None, help="Disease name (Stage 1).")
     parser.add_argument("--target", default=None, help="ChEMBL target ID (Stage 2).")
+    parser.add_argument("--activities-csv", default=None,
+                        help="User-supplied IC50 CSV for novel targets.")
+    parser.add_argument("--screening-library", default=None,
+                        help="User-supplied SMILES library CSV for screening.")
+    parser.add_argument("--docking-only", action="store_true",
+                        help="Skip ML, use docking only (novel targets w/o IC50 data).")
     parser.add_argument("--hits-csv", default=None, help="Hits CSV path (Stage 3).")
     parser.add_argument("-v", "--verbose", action="store_true")
 
@@ -38,6 +44,12 @@ def main() -> None:
         overrides.setdefault("target_discovery", {})["disease"] = args.disease
     if args.target:
         overrides.setdefault("target_to_hit", {})["target_chembl_id"] = args.target
+    if args.activities_csv:
+        overrides.setdefault("target_to_hit", {})["external_activities_csv"] = args.activities_csv
+    if args.screening_library:
+        overrides.setdefault("target_to_hit", {})["screening_library_csv"] = args.screening_library
+    if args.docking_only:
+        overrides.setdefault("target_to_hit", {})["docking_only"] = True
 
     cfg = load_config(config_path=args.config, overrides=overrides)
 

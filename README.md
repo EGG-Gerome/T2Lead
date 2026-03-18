@@ -137,17 +137,24 @@ cp .env.example .env
 
 ## Usage
 
-### Full Pipeline
+### Scenario A — Known Target in ChEMBL (default)
 
 ```bash
-# Run all four stages for a disease
+# Run all four stages for a disease (auto-discovers targets)
 python scripts/run_pipeline.py --disease "breast cancer" -v
 
-# Run with a specific target (skip Stage 1)
+# Run with a specific ChEMBL target (skip Stage 1)
 python scripts/run_pipeline.py --target CHEMBL4005 --stages target_to_hit hit_to_lead lead_optimization
 
 # Custom config + verbose logging
 python scripts/run_pipeline.py -c my_config.yaml -v
+```
+
+Set the protein structure for docking in `configs/default_config.yaml`:
+
+```yaml
+lead_optimization:
+  pdb_id: "4JPS"    # experimental crystal structure from RCSB PDB
 ```
 
 ### Single Stage
@@ -165,6 +172,57 @@ python scripts/run_stage.py hit_to_lead
 # Stage 4: Lead Optimization (reads leads from data/<disease>/final_lead_candidates.csv)
 python scripts/run_stage.py lead_optimization
 ```
+
+### Novel Targets (Not in ChEMBL)
+
+For targets with little or no ChEMBL data, Stage 2 supports three alternative modes:
+
+**Scenario B — User-supplied IC50 data** (target has assay data from literature / BindingDB / your own lab, but not in ChEMBL):
+
+```bash
+# Provide your own IC50 CSV (must have: molecule_chembl_id, target_chembl_id,
+# standard_value, standard_type, standard_units)
+python scripts/run_pipeline.py \
+  --target MY_TARGET_ID \
+  --activities-csv /path/to/my_ic50_data.csv \
+  -v
+
+# Optionally also provide a custom screening library
+python scripts/run_pipeline.py \
+  --target MY_TARGET_ID \
+  --activities-csv /path/to/my_ic50_data.csv \
+  --screening-library /path/to/my_compounds.csv \
+  -v
+```
+
+**Scenario C — Docking-only mode** (truly novel target with zero activity data, but a protein structure exists):
+
+```bash
+# With a known PDB structure:
+python scripts/run_pipeline.py \
+  --target MY_NOVEL_TARGET \
+  --docking-only \
+  -v
+
+# With only an amino acid sequence (no PDB needed — ESMFold predicts the 3D structure automatically):
+python scripts/run_pipeline.py \
+  --target MY_NOVEL_TARGET \
+  --docking-only \
+  --protein-sequence "MTEYKLVVVGAVGVGKSALT..." \
+  -v
+```
+
+The pipeline automatically resolves the protein structure in this priority:
+
+| Priority | Source | What you provide |
+|----------|--------|------------------|
+| 1 | RCSB PDB | `pdb_id: "4JPS"` in config |
+| 2 | Local PDB file | Place `.pdb` file in output directory |
+| 3 | **ESMFold API** (automatic) | `--protein-sequence "MTEYKLVV..."` or `protein_sequence` in config |
+
+ESMFold (Meta AI) predicts AlphaFold-quality 3D structures from amino acid sequences via a free REST API — no signup, no GPU, fully integrated into the pipeline.
+
+> **Sequence length limit**: ESMFold API works best for sequences under 400 residues. For longer proteins, download from [AlphaFold DB](https://alphafold.ebi.ac.uk/) or use [ColabFold](https://colab.research.google.com/github/sokrypton/ColabFold/blob/main/AlphaFold2.ipynb).
 
 ### As a Python Library
 
@@ -292,6 +350,7 @@ All outputs go to `data/<disease>/` (configurable via `pipeline.out_dir`):
 
 | File | Description | Produced by |
 |---|---|---|
+| `fp_cache/morgan_*.npy` | Cached Morgan fingerprints (auto-generated) | Stage 2 |
 | `molecules_chemblid_smiles.csv` | Crawled molecules | Stage 2 |
 | `activities_ic50.csv` | Crawled IC50 activity data | Stage 2 |
 | `dataset_target_ic50.csv` | Training dataset for the selected target | Stage 2 |
@@ -315,6 +374,7 @@ All outputs go to `data/<disease>/` (configurable via `pipeline.out_dir`):
 | REINVENT4 | Optional | `git clone` + `pip install -e .` from [REINVENT4](https://github.com/MolecularAI/REINVENT4) | Stage 3 (RL optimization) |
 | AutoDock Vina | Optional | `pip install vina meeko gemmi` | Stage 4 (docking) |
 | OpenMM | Optional | `conda install -c conda-forge openmm pdbfixer mdtraj` | Stage 4 (MD simulation) |
+| openmmforcefields | Optional | `conda install -c conda-forge openmmforcefields openff-toolkit` | Stage 4 (MD ligand parameterization) |
 | OriGene | Optional | See [OriGene](https://github.com/GENTEL-lab/OriGene) | Stage 1 (AI target rec.) |
 
 All optional dependencies degrade gracefully — if not installed, the corresponding step is skipped with a warning.

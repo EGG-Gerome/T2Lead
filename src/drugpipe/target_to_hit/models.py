@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import KFold, train_test_split
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +83,30 @@ class ModelTrainer:
         self.rf: Optional[RandomForestRegressor] = None
         self.mlp: Optional[Any] = None
         self._device: Optional[Any] = None
+        self._cache_dir: Optional[Path] = None
 
     # ------------------------------------------------------------------
-    def train(self, X: np.ndarray, y: np.ndarray) -> Dict[str, float]:
-        """Train both models, return test-set RMSE metrics."""
-        # 训练两个模型，返回测试集 RMSE 指标。
+    def train(
+        self, X: np.ndarray, y: np.ndarray, cache_dir: Optional[Path] = None,
+    ) -> Dict[str, float]:
+        """Train both models with k-fold CV evaluation, return metrics.
+
+        If *cache_dir* is given and a matching model cache exists (same
+        data hash + hyperparameters), loads it instead of retraining.
+        """
+        self._cache_dir = cache_dir
+        if cache_dir is not None:
+            loaded_metrics = self._try_load(X, y)
+            if loaded_metrics is not None:
+                return loaded_metrics
+
         X_tr, X_te, y_tr, y_te = train_test_split(
             X, y, test_size=self.test_size, random_state=self.seed,
         )
 
-        # Random Forest
-        logger.info("Training RandomForest (n_estimators=%d) ...", self.rf_n_est)
+        cv_metrics = self._cross_validate(X_tr, y_tr)
+
+        logger.info("Training final RandomForest (n_estimators=%d) ...", self.rf_n_est)
         self.rf = RandomForestRegressor(
             n_estimators=self.rf_n_est,
             max_depth=None,
@@ -99,21 +115,121 @@ class ModelTrainer:
             min_samples_leaf=self.rf_min_leaf,
         )
         self.rf.fit(X_tr, y_tr)
-        rmse_rf = _rmse(y_te, self.rf.predict(X_te))
-        logger.info("  RF test RMSE = %.4f", rmse_rf)
+        pred_te_rf = self.rf.predict(X_te)
+        rmse_rf = _rmse(y_te, pred_te_rf)
+        r2_rf = float(r2_score(y_te, pred_te_rf))
+        logger.info("  RF held-out RMSE = %.4f, R² = %.4f", rmse_rf, r2_rf)
 
-        metrics = {"rmse_rf": rmse_rf}
+        metrics: Dict[str, float] = {
+            "rmse_rf": rmse_rf,
+            "r2_rf": r2_rf,
+            **cv_metrics,
+        }
 
-        # Torch MLP
         if _TORCH_OK:
-            logger.info("Training Torch MLP (epochs=%d) ...", self.mlp_epochs)
+            logger.info("Training final Torch MLP (epochs=%d) ...", self.mlp_epochs)
             self.mlp, rmse_mlp = self._train_mlp(X_tr, y_tr, X_te, y_te)
-            logger.info("  MLP test RMSE = %.4f", rmse_mlp)
+            pred_te_mlp = self._predict_mlp(X_te)
+            r2_mlp = float(r2_score(y_te, pred_te_mlp))
+            logger.info("  MLP held-out RMSE = %.4f, R² = %.4f", rmse_mlp, r2_mlp)
             metrics["rmse_mlp"] = rmse_mlp
+            metrics["r2_mlp"] = r2_mlp
         else:
             logger.info("Torch not available — skipping MLP.")
 
+        if cache_dir is not None:
+            self._save(X, y, metrics)
+
         return metrics
+
+    # ------------------------------------------------------------------
+    # Model persistence
+    # ------------------------------------------------------------------
+    def _data_hash(self, X: np.ndarray, y: np.ndarray) -> str:
+        h = hashlib.sha256()
+        h.update(f"n={len(y)},d={X.shape[1]},seed={self.seed}".encode())
+        h.update(y[:64].tobytes())
+        return h.hexdigest()[:12]
+
+    def _save(self, X: np.ndarray, y: np.ndarray, metrics: Dict[str, float]) -> None:
+        d = self._cache_dir
+        d.mkdir(parents=True, exist_ok=True)
+        tag = self._data_hash(X, y)
+        joblib.dump(self.rf, d / f"rf_{tag}.joblib")
+        joblib.dump(metrics, d / f"metrics_{tag}.joblib")
+        if self.mlp is not None and _TORCH_OK:
+            import torch
+            torch.save(self.mlp.state_dict(), d / f"mlp_{tag}.pt")
+            joblib.dump(X.shape[1], d / f"mlp_dim_{tag}.joblib")
+        logger.info("Saved model cache: %s (tag=%s)", d, tag)
+
+    def _try_load(self, X: np.ndarray, y: np.ndarray) -> Optional[Dict[str, float]]:
+        d = self._cache_dir
+        if d is None or not d.exists():
+            return None
+        tag = self._data_hash(X, y)
+        rf_path = d / f"rf_{tag}.joblib"
+        metrics_path = d / f"metrics_{tag}.joblib"
+        if not rf_path.exists() or not metrics_path.exists():
+            return None
+        self.rf = joblib.load(rf_path)
+        metrics = joblib.load(metrics_path)
+        mlp_path = d / f"mlp_{tag}.pt"
+        dim_path = d / f"mlp_dim_{tag}.joblib"
+        if _TORCH_OK and mlp_path.exists() and dim_path.exists():
+            import torch
+            in_dim = joblib.load(dim_path)
+            self._device = _resolve_torch_device(self._device_cfg)
+            self.mlp = _MLPRegressor(in_dim).to(self._device)
+            self.mlp.load_state_dict(torch.load(mlp_path, map_location=self._device, weights_only=True))
+            self.mlp.eval()
+        logger.info("Loaded cached model: %s (tag=%s)", d, tag)
+        logger.info("  Cached metrics: %s", metrics)
+        return metrics
+
+    # ------------------------------------------------------------------
+    def _cross_validate(
+        self, X: np.ndarray, y: np.ndarray, n_folds: int = 5,
+    ) -> Dict[str, float]:
+        """Run k-fold CV on the training set and report per-fold RMSE/R²."""
+        logger.info("Running %d-fold cross-validation ...", n_folds)
+        kf = KFold(n_splits=n_folds, shuffle=True, random_state=self.seed)
+        fold_rmse: list[float] = []
+        fold_r2: list[float] = []
+
+        for fold, (train_idx, val_idx) in enumerate(kf.split(X), 1):
+            X_f_tr, X_f_val = X[train_idx], X[val_idx]
+            y_f_tr, y_f_val = y[train_idx], y[val_idx]
+
+            rf = RandomForestRegressor(
+                n_estimators=self.rf_n_est,
+                max_depth=None,
+                n_jobs=-1,
+                random_state=self.seed,
+                min_samples_leaf=self.rf_min_leaf,
+            )
+            rf.fit(X_f_tr, y_f_tr)
+            pred = rf.predict(X_f_val)
+            rmse = _rmse(y_f_val, pred)
+            r2 = float(r2_score(y_f_val, pred))
+            fold_rmse.append(rmse)
+            fold_r2.append(r2)
+            logger.info("  Fold %d/%d: RMSE=%.4f  R²=%.4f", fold, n_folds, rmse, r2)
+
+        mean_rmse = float(np.mean(fold_rmse))
+        std_rmse = float(np.std(fold_rmse))
+        mean_r2 = float(np.mean(fold_r2))
+        std_r2 = float(np.std(fold_r2))
+        logger.info(
+            "  CV summary: RMSE=%.4f ± %.4f, R²=%.4f ± %.4f",
+            mean_rmse, std_rmse, mean_r2, std_r2,
+        )
+        return {
+            "cv_rmse_mean": mean_rmse,
+            "cv_rmse_std": std_rmse,
+            "cv_r2_mean": mean_r2,
+            "cv_r2_std": std_r2,
+        }
 
     # ------------------------------------------------------------------
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -173,7 +289,7 @@ class ModelTrainer:
         return self._predict_torch(self.mlp, self._device, X)
 
     @staticmethod
-    def _predict_torch(model: Any, device: Any, X: np.ndarray, batch_size: int = 4096) -> np.ndarray:
+    def _predict_torch(model: Any, devge lice: Any, X: np.ndarray, batch_size: int = 4096) -> np.ndarray:
         model.eval()
         preds = []
         with torch.no_grad():

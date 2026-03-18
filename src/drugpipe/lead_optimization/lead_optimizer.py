@@ -99,28 +99,46 @@ class LeadOptimizer:
         """Compute a weighted composite optimization score.
 
         Higher is better.  Individual components are normalised to [0,1].
+        When MD data is missing, its weight is redistributed proportionally
+        to the components that have real data, so NaN components don't
+        inflate or deflate scores with arbitrary defaults.
         """
         df = df.copy()
 
-        dock_norm = self._normalise_lower_better(df.get("docking_score"))
+        dock_s = df.get("docking_score")
+        dock_available = dock_s is not None and dock_s.notna().any()
+        dock_norm = self._normalise_lower_better(dock_s) if dock_available else None
+
         admet_norm = 1.0 - df.get("admet_risk", pd.Series(0.5, index=df.index)).fillna(0.5)
-        md_norm = self._normalise_lower_better(df.get("md_binding_energy"))
 
-        # Stability: lower RMSD is better; use 1.0 if MD not run
-        rmsd = df.get("md_rmsd_mean")
-        if rmsd is not None and rmsd.notna().any():
-            stab_norm = self._normalise_lower_better(rmsd)
+        md_s = df.get("md_binding_energy")
+        md_available = md_s is not None and md_s.notna().any()
+        md_norm = self._normalise_lower_better(md_s) if md_available else None
+
+        rmsd_s = df.get("md_rmsd_mean")
+        stab_available = rmsd_s is not None and rmsd_s.notna().any()
+        stab_norm = self._normalise_lower_better(rmsd_s) if stab_available else None
+
+        components: list[tuple[float, pd.Series]] = []
+        components.append((self.w_admet, admet_norm))
+        if dock_norm is not None:
+            components.append((self.w_docking, dock_norm))
         else:
-            stab_norm = pd.Series(0.5, index=df.index)
+            logger.warning("Docking data missing — excluded from composite score.")
+        if md_norm is not None:
+            components.append((self.w_md, md_norm))
+        else:
+            logger.warning("MD binding energy missing — excluded from composite score.")
+        if stab_norm is not None:
+            components.append((self.w_stability, stab_norm))
+        else:
+            logger.warning("MD stability (RMSD) missing — excluded from composite score.")
 
-        w_total = self.w_docking + self.w_admet + self.w_md + self.w_stability
-
-        df["opt_score"] = (
-            self.w_docking * dock_norm
-            + self.w_admet * admet_norm
-            + self.w_md * md_norm
-            + self.w_stability * stab_norm
-        ) / max(w_total, 1e-9)
+        w_total = sum(w for w, _ in components)
+        score = pd.Series(0.0, index=df.index)
+        for w, s in components:
+            score += w * s
+        df["opt_score"] = score / max(w_total, 1e-9)
 
         return df
 

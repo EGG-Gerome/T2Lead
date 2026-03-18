@@ -39,6 +39,13 @@ target_discovery:
 # -------------------------------------------------------------------
 target_to_hit:
   target_chembl_id: ""               # leave empty to auto-select from Stage 1
+  external_activities_csv: ""        # path to user-supplied IC50 CSV for novel targets
+                                     # must have columns: molecule_chembl_id, target_chembl_id,
+                                     # standard_value (IC50 in nM), standard_type, standard_units
+  screening_library_csv: ""          # path to user-supplied molecule library (SMILES) for screening
+                                     # must have columns: molecule_chembl_id, canonical_smiles
+  docking_only: false                # true = skip ML model, use docking scores directly
+                                     # useful for novel targets with no IC50 data at all
 
   chembl:
     base_url: https://www.ebi.ac.uk/chembl/api/data
@@ -120,6 +127,8 @@ hit_to_lead:
 lead_optimization:
   enabled: true
   pdb_id: "4JPS"                      # RCSB PDB ID for target protein (PIK3CA / PI3Kα for breast cancer)
+  protein_sequence: ""                 # amino acid sequence; if pdb_id is empty, ESMFold API
+                                       # predicts a 3D structure from this sequence automatically
   binding_site:
     center: [0.0, 0.0, 0.0]
     box_size: [25.0, 25.0, 25.0]
@@ -127,7 +136,7 @@ lead_optimization:
 
   docking:
     enabled: true
-    exhaustiveness: 8                # lower = faster; 8 is standard, 32 for production
+    exhaustiveness: 32               # 8 = fast screening; 32 = production quality
     n_poses: 3
     n_cpus: 0                        # 0 = auto-detect; Vina uses CPU multi-threading
     score_threshold: -6.0            # kcal/mol; discard scores worse than this

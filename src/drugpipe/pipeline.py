@@ -102,8 +102,18 @@ def run_target_to_hit(
     target_chembl_id: Optional[str] = None,
     crawl_out_dir: Optional[Path] = None,
 ) -> pd.DataFrame:
-    """Stage 2: ChEMBL crawl → ML training → virtual screening → ADMET filter."""
-    # 阶段二：ChEMBL 爬取 → ML 训练 → 虚拟筛选 → ADMET 过滤。
+    """Stage 2: data acquisition → ML training → virtual screening → ADMET filter.
+
+    Supports three modes:
+      1. **ChEMBL mode** (default): crawl ChEMBL for molecules + IC50 activities.
+      2. **External data mode**: user supplies their own IC50 CSV
+         (``target_to_hit.external_activities_csv``).  Useful for targets with
+         data in BindingDB / literature but not in ChEMBL.
+      3. **Docking-only mode**: skip ML entirely, select candidates by
+         drug-likeness only, let Stage 4 docking do the scoring
+         (``target_to_hit.docking_only: true``).  Useful for truly novel
+         targets with zero IC50 data anywhere.
+    """
     from drugpipe.target_to_hit.chembl_api import ChEMBLCrawler
     from drugpipe.target_to_hit.dataset import DatasetBuilder
     from drugpipe.target_to_hit.featurizer import MorganFeaturizer
@@ -116,41 +126,65 @@ def run_target_to_hit(
     seed = int(cfg.get("pipeline", {}).get("seed", 42))
     _set_seed(seed)
 
-    # Resolve target ID / 解析靶点 ID
-    tid = target_chembl_id or cfg.get("target_to_hit", {}).get("target_chembl_id", "") or None
+    t2h_cfg = cfg.get("target_to_hit", {})
+    tid = target_chembl_id or t2h_cfg.get("target_chembl_id", "") or None
+    docking_only = bool(t2h_cfg.get("docking_only", False))
+    ext_act_csv = t2h_cfg.get("external_activities_csv", "") or ""
+    ext_lib_csv = t2h_cfg.get("screening_library_csv", "") or ""
 
-    # 1. Crawl (shared directory) / 爬取（共享目录）
-    crawler = ChEMBLCrawler(cfg, shared_dir)
-    mol_csv = crawler.crawl_molecules()
-    act_csv = crawler.crawl_activities()
+    # --- Acquire molecule library ---
+    if ext_lib_csv and Path(ext_lib_csv).exists():
+        mol_csv = Path(ext_lib_csv)
+        logger.info("Using user-supplied screening library: %s", mol_csv)
+    else:
+        crawler = ChEMBLCrawler(cfg, shared_dir)
+        mol_csv = crawler.crawl_molecules()
 
-    # 2. Dataset (per-disease directory) / 数据集构建（按疾病子目录）
+    # --- Docking-only mode: skip ML, filter by drug-likeness only ---
+    if docking_only:
+        logger.info("Docking-only mode: skipping ML model training.")
+        logger.info("Candidates will be selected by drug-likeness (QED + ADMET rules).")
+        df_mol = pd.read_csv(mol_csv).dropna(subset=["canonical_smiles"]).drop_duplicates("molecule_chembl_id")
+        filt = ADMETFilter(cfg, out_dir)
+        screener = VirtualScreener(cfg, out_dir)
+        screener._add_properties(df_mol)
+        df_mol["pred_pIC50_ens"] = np.nan
+        df_mol["pred_IC50_nM_ens"] = np.nan
+        df_hits = filt.run(df_mol)
+        logger.info("Stage 2 (docking-only) complete — %d candidates for docking.", len(df_hits))
+        return df_hits
+
+    # --- Acquire activity data ---
+    if ext_act_csv and Path(ext_act_csv).exists():
+        act_csv = Path(ext_act_csv)
+        logger.info("Using user-supplied activity data: %s", act_csv)
+    else:
+        crawler = ChEMBLCrawler(cfg, shared_dir)
+        act_csv = crawler.crawl_activities()
+
+    # --- ML-based screening pipeline ---
+    fp_cache_dir = shared_dir / "fp_cache"
     builder = DatasetBuilder(cfg, out_dir)
     df_ds = builder.build(mol_csv, act_csv, tid)
 
-    # 3. Featurize / 特征化
-    feat = MorganFeaturizer(cfg)
+    feat = MorganFeaturizer(cfg, cache_dir=fp_cache_dir)
     X = feat.transform(df_ds["canonical_smiles"].tolist())
     y = df_ds["pIC50_median"].astype(float).values
 
-    # 4. Train / 训练
+    model_cache_dir = out_dir / "model_cache"
     trainer = ModelTrainer(cfg)
-    metrics = trainer.train(X, y)
+    metrics = trainer.train(X, y, cache_dir=model_cache_dir)
     logger.info("Training metrics: %s", metrics)
 
-    # 5. Virtual screening on all molecules / 对全库分子虚拟筛选
     df_mol = pd.read_csv(mol_csv).dropna(subset=["canonical_smiles"]).drop_duplicates("molecule_chembl_id")
-    screener = VirtualScreener(cfg, out_dir)
+    screener = VirtualScreener(cfg, out_dir, fp_cache_dir=fp_cache_dir)
     df_scored = screener.run(df_mol, trainer)
 
-    # 6. ADMET filter / ADMET 过滤
     filt = ADMETFilter(cfg, out_dir)
     df_hits = filt.run(df_scored)
 
     logger.info("Stage 2 complete — %d hit candidates.", len(df_hits))
 
-    # Stash trainer/featurizer on the returned frame for Stage 3 re-use
-    # 将 trainer/featurizer 挂在返回的 DataFrame 上供阶段三复用
     df_hits.attrs["_trainer"] = trainer
     df_hits.attrs["_featurizer"] = feat
 
@@ -362,6 +396,26 @@ def main() -> None:
         help="ChEMBL target ID for Stage 2 (skip Stage 1).",
     )
     parser.add_argument(
+        "--activities-csv",
+        default=None,
+        help="Path to user-supplied IC50 CSV for novel targets not in ChEMBL.",
+    )
+    parser.add_argument(
+        "--screening-library",
+        default=None,
+        help="Path to user-supplied SMILES library CSV for screening.",
+    )
+    parser.add_argument(
+        "--docking-only",
+        action="store_true",
+        help="Skip ML model, use docking scores only (for targets with no IC50 data).",
+    )
+    parser.add_argument(
+        "--protein-sequence",
+        default=None,
+        help="Amino acid sequence for ESMFold structure prediction (no PDB needed).",
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable DEBUG logging.",
@@ -381,6 +435,16 @@ def main() -> None:
         overrides.setdefault("target_discovery", {})["disease"] = args.disease
     if args.target:
         overrides.setdefault("target_to_hit", {})["target_chembl_id"] = args.target
+    if args.activities_csv:
+        overrides.setdefault("target_to_hit", {})["external_activities_csv"] = args.activities_csv
+    if args.screening_library:
+        overrides.setdefault("target_to_hit", {})["screening_library_csv"] = args.screening_library
+    if args.docking_only:
+        overrides.setdefault("target_to_hit", {})["docking_only"] = True
+    if args.protein_sequence:
+        overrides.setdefault("lead_optimization", {})["protein_sequence"] = args.protein_sequence
+        if not args.target:
+            overrides.setdefault("lead_optimization", {})["pdb_id"] = ""
 
     cfg = load_config(config_path=args.config, overrides=overrides)
     run_pipeline(cfg)

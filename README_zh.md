@@ -135,17 +135,24 @@ cp .env.example .env
 
 ## 使用说明
 
-### 完整流水线
+### 场景 A — 已知靶点（ChEMBL 中有数据，默认模式）
 
 ```bash
-# 针对某疾病运行全部四阶段
+# 针对某疾病运行全部四阶段（自动发现靶点）
 python scripts/run_pipeline.py --disease "breast cancer" -v
 
-# 指定靶点（跳过阶段一）
+# 指定 ChEMBL 靶点 ID（跳过阶段一）
 python scripts/run_pipeline.py --target CHEMBL4005 --stages target_to_hit hit_to_lead lead_optimization
 
 # 自定义配置 + 详细日志
 python scripts/run_pipeline.py -c my_config.yaml -v
+```
+
+在 `configs/default_config.yaml` 中设置蛋白结构用于对接：
+
+```yaml
+lead_optimization:
+  pdb_id: "4JPS"    # RCSB PDB 实验晶体结构
 ```
 
 ### 单阶段运行
@@ -163,6 +170,57 @@ python scripts/run_stage.py hit_to_lead
 # 阶段四：先导优化（从 data/<疾病>/final_lead_candidates.csv 读取）
 python scripts/run_stage.py lead_optimization
 ```
+
+### 新靶点支持（不在 ChEMBL 中）
+
+对于 ChEMBL 中数据不足或完全没有的新靶点，阶段二支持三种替代模式：
+
+**场景 B — 用户自有 IC50 数据**（靶点有文献/BindingDB/自有实验数据，但不在 ChEMBL 中）：
+
+```bash
+# 提供自有 IC50 CSV（需包含列：molecule_chembl_id, target_chembl_id,
+# standard_value, standard_type, standard_units）
+python scripts/run_pipeline.py \
+  --target MY_TARGET_ID \
+  --activities-csv /path/to/my_ic50_data.csv \
+  -v
+
+# 还可以同时提供自有化合物筛选库
+python scripts/run_pipeline.py \
+  --target MY_TARGET_ID \
+  --activities-csv /path/to/my_ic50_data.csv \
+  --screening-library /path/to/my_compounds.csv \
+  -v
+```
+
+**场景 C — 纯对接模式**（全新靶点，完全没有活性数据，但有蛋白结构）：
+
+```bash
+# 有已知 PDB 结构：
+python scripts/run_pipeline.py \
+  --target MY_NOVEL_TARGET \
+  --docking-only \
+  -v
+
+# 只有氨基酸序列（无需 PDB —— ESMFold 自动预测 3D 结构）：
+python scripts/run_pipeline.py \
+  --target MY_NOVEL_TARGET \
+  --docking-only \
+  --protein-sequence "MTEYKLVVVGAVGVGKSALT..." \
+  -v
+```
+
+Pipeline 按以下优先级自动获取蛋白结构：
+
+| 优先级 | 来源 | 你需要提供的 |
+|--------|------|-------------|
+| 1 | RCSB PDB | 配置中设置 `pdb_id: "4JPS"` |
+| 2 | 本地 PDB 文件 | 将 `.pdb` 文件放入输出目录 |
+| 3 | **ESMFold API**（全自动） | `--protein-sequence "MTEYKLVV..."` 或在配置中设置 `protein_sequence` |
+
+ESMFold（Meta AI）通过免费 REST API 从氨基酸序列预测接近 AlphaFold 质量的 3D 结构——无需注册、无需 GPU、已完全集成到流水线中。
+
+> **序列长度限制**：ESMFold API 对 400 残基以下的蛋白效果最好。更长的蛋白建议从 [AlphaFold DB](https://alphafold.ebi.ac.uk/) 下载，或使用 [ColabFold](https://colab.research.google.com/github/sokrypton/ColabFold/blob/main/AlphaFold2.ipynb)。
 
 ### 作为 Python 库调用
 
@@ -290,6 +348,7 @@ export DP_LEAD_OPTIMIZATION__PDB_ID=4JPS
 
 | 文件 | 说明 | 产生于 |
 |---|---|---|
+| `fp_cache/morgan_*.npy` | 缓存的 Morgan 指纹（自动生成） | 阶段二 |
 | `molecules_chemblid_smiles.csv` | 爬取的分子 | 阶段二 |
 | `activities_ic50.csv` | 爬取的 IC50 活性数据 | 阶段二 |
 | `dataset_target_ic50.csv` | 所选靶点的训练数据集 | 阶段二 |
@@ -313,6 +372,7 @@ export DP_LEAD_OPTIMIZATION__PDB_ID=4JPS
 | REINVENT4 | 可选 | `git clone` + `pip install -e .`，见 [REINVENT4](https://github.com/MolecularAI/REINVENT4) | 阶段三（RL 优化） |
 | AutoDock Vina | 可选 | `pip install vina meeko gemmi` | 阶段四（分子对接） |
 | OpenMM | 可选 | `conda install -c conda-forge openmm pdbfixer mdtraj` | 阶段四（MD 模拟） |
+| openmmforcefields | 可选 | `conda install -c conda-forge openmmforcefields openff-toolkit` | 阶段四（MD 配体力场参数化） |
 | OriGene | 可选 | 见 [OriGene 仓库](https://github.com/GENTEL-lab/OriGene) | 阶段一（AI 靶点推荐） |
 
 所有可选依赖均优雅降级——未安装时跳过对应步骤并输出警告。

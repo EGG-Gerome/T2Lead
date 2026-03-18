@@ -30,10 +30,10 @@ class VirtualScreener:
     """Score all molecules with the trained pIC50 model and compute properties."""
     # 用训练好的 pIC50 模型对所有分子打分并计算性质。
 
-    def __init__(self, cfg: Dict[str, Any], out_dir: Path):
+    def __init__(self, cfg: Dict[str, Any], out_dir: Path, fp_cache_dir: Optional[Path] = None):
         self.out_dir = out_dir
         self.scored_csv = out_dir / "scored_candidates.csv"
-        self.featurizer = MorganFeaturizer(cfg)
+        self.featurizer = MorganFeaturizer(cfg, cache_dir=fp_cache_dir)
 
     # ------------------------------------------------------------------
     def run(
@@ -44,8 +44,19 @@ class VirtualScreener:
         """
         Predict pIC50 for every molecule in *df_mol*, compute QED /
         descriptors / structural alerts, and save to CSV.
+
+        If ``scored_candidates.csv`` already exists with the correct row
+        count, loads it directly instead of recomputing (~15 min saved).
         """
-        # 对 df_mol 中每个分子预测 pIC50，计算 QED/描述符/结构警示并保存为 CSV。
+        if self.scored_csv.exists():
+            cached = pd.read_csv(self.scored_csv)
+            if len(cached) == len(df_mol) and "pred_pIC50_ens" in cached.columns:
+                logger.info(
+                    "Loaded cached scored candidates: %s (%d rows)",
+                    self.scored_csv, len(cached),
+                )
+                return cached
+
         smiles = df_mol["canonical_smiles"].tolist()
         logger.info("Featurizing %d molecules ...", len(smiles))
         X = self.featurizer.transform(smiles)

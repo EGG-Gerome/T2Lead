@@ -37,12 +37,22 @@ _AD4_TYPE = {
 }
 
 
+_ESMFOLD_URL = "https://api.esmatlas.com/foldSequence/v1/pdb/"
+
+
 class ProteinPreparator:
-    """Fetch, fix, and prepare a protein structure for docking / MD."""
+    """Fetch, fix, and prepare a protein structure for docking / MD.
+
+    Supports three structure sources (tried in order):
+      1. RCSB PDB (``pdb_id``)
+      2. Local PDB file already in *out_dir*
+      3. ESMFold API prediction from amino-acid ``protein_sequence``
+    """
 
     def __init__(self, cfg: Dict[str, Any]):
         lo = cfg.get("lead_optimization", {})
         self.pdb_id = (lo.get("pdb_id", "") or "").strip().upper()
+        self.protein_sequence = (lo.get("protein_sequence", "") or "").strip()
         bs = lo.get("binding_site", {})
         self.auto_detect = bool(bs.get("auto_detect", True))
         self._cfg_center: List[float] = bs.get("center", [0.0, 0.0, 0.0])
@@ -55,8 +65,8 @@ class ProteinPreparator:
         Returns a dict with paths and binding-site geometry, or None on
         failure / missing PDB ID.
         """
-        if not self.pdb_id:
-            logger.warning("No pdb_id configured — skipping protein preparation.")
+        if not self.pdb_id and not self.protein_sequence:
+            logger.warning("No pdb_id or protein_sequence configured — skipping protein preparation.")
             return None
 
         pdb_path = self._fetch_pdb(out_dir)
@@ -78,23 +88,79 @@ class ProteinPreparator:
 
     # ------------------------------------------------------------------
     def _fetch_pdb(self, out_dir: Path) -> Optional[Path]:
-        """Download structure from RCSB."""
-        url = f"https://files.rcsb.org/download/{self.pdb_id}.pdb"
-        dest = out_dir / f"{self.pdb_id}.pdb"
+        """Obtain a PDB structure: RCSB download → local file → ESMFold prediction."""
+        if self.pdb_id:
+            dest = out_dir / f"{self.pdb_id}.pdb"
+            if dest.exists():
+                logger.info("PDB file already cached: %s", dest)
+                return dest
+
+            logger.info("Downloading PDB %s from RCSB ...", self.pdb_id)
+            try:
+                url = f"https://files.rcsb.org/download/{self.pdb_id}.pdb"
+                resp = requests.get(url, timeout=60)
+                resp.raise_for_status()
+                dest.write_text(resp.text, encoding="utf-8")
+                logger.info("PDB saved: %s (%d bytes)", dest, len(resp.text))
+                return dest
+            except Exception as exc:
+                logger.error("Failed to download PDB %s: %s", self.pdb_id, exc)
+                if not self.protein_sequence:
+                    return None
+                logger.info("Falling back to ESMFold structure prediction ...")
+
+        if self.protein_sequence:
+            return self._predict_structure_esmfold(out_dir)
+
+        return None
+
+    # ------------------------------------------------------------------
+    def _predict_structure_esmfold(self, out_dir: Path) -> Optional[Path]:
+        """Predict 3D structure from amino-acid sequence via ESMFold API.
+
+        ESMFold (Meta AI) provides a free REST API that accepts a protein
+        sequence and returns an AlphaFold-quality PDB structure.  No
+        authentication, no GPU, no signup required.
+        """
+        seq = self.protein_sequence.replace(" ", "").replace("\n", "")
+        tag = f"ESMFold_{len(seq)}aa"
+        dest = out_dir / f"{tag}.pdb"
+
         if dest.exists():
-            logger.info("PDB file already cached: %s", dest)
+            logger.info("ESMFold structure already cached: %s", dest)
+            self.pdb_id = tag
             return dest
 
-        logger.info("Downloading PDB %s from RCSB ...", self.pdb_id)
+        if len(seq) > 400:
+            logger.warning(
+                "Sequence length %d > 400 residues. ESMFold API may be slow "
+                "or reject very long sequences. Consider using ColabFold instead.",
+                len(seq),
+            )
+
+        logger.info(
+            "Predicting 3D structure via ESMFold API (%d residues) ...", len(seq),
+        )
         try:
-            resp = requests.get(url, timeout=60)
+            resp = requests.post(
+                _ESMFOLD_URL,
+                data=seq,
+                headers={"Content-Type": "text/plain"},
+                timeout=300,
+            )
             resp.raise_for_status()
         except Exception as exc:
-            logger.error("Failed to download PDB %s: %s", self.pdb_id, exc)
+            logger.error("ESMFold API failed: %s", exc)
             return None
 
-        dest.write_text(resp.text, encoding="utf-8")
-        logger.info("PDB saved: %s (%d bytes)", dest, len(resp.text))
+        pdb_text = resp.text
+        if not pdb_text.strip() or "ATOM" not in pdb_text:
+            logger.error("ESMFold returned empty or invalid PDB.")
+            return None
+
+        dest.write_text(pdb_text, encoding="utf-8")
+        self.pdb_id = tag
+        logger.info("ESMFold structure saved: %s (%d bytes)", dest, len(pdb_text))
         return dest
 
     # ------------------------------------------------------------------
