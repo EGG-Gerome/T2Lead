@@ -1,6 +1,6 @@
 """HTTP client with automatic retry, exponential back-off, and polite sleep."""
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: HTTP client with automatic retry, exponential back-off, and polite sleep.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 带自动重试、指数退避与礼貌延时的 HTTP 客户端。
 
@@ -13,14 +13,10 @@ from typing import Any, Dict, Optional
 import requests
 
 
-# EN: HTTPClient core behavior and intent.
-# 中文：HTTPClient 的核心行为与设计意图。
 class HTTPClient:
     """Thin wrapper around ``requests.get`` with retry / back-off logic."""
     # 对 requests 的薄封装，支持重试与退避。
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(
         self,
         timeout: int = 60,
@@ -36,8 +32,6 @@ class HTTPClient:
         self._session.headers.update({"Accept": "application/json"})
 
     # ------------------------------------------------------------------
-    # EN: get_json core behavior and intent.
-    # 中文：get_json 的核心行为与设计意图。
     def get_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """GET URL and return JSON; retry on 429/5xx. / GET 请求并返回 JSON，遇 429/5xx 重试。"""
         last_err: Optional[Exception] = None
@@ -57,8 +51,6 @@ class HTTPClient:
                 self._backoff(attempt)
         raise RuntimeError(f"GET failed after {self.retries} retries: {url} — {last_err}")
 
-    # EN: post_json core behavior and intent.
-    # 中文：post_json 的核心行为与设计意图。
     def post_json(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """POST JSON payload and return JSON. / 发送 JSON 并返回响应 JSON。"""
         last_err: Optional[Exception] = None
@@ -79,8 +71,6 @@ class HTTPClient:
         raise RuntimeError(f"POST failed after {self.retries} retries: {url} — {last_err}")
 
     # ------------------------------------------------------------------
-    # EN: _backoff core behavior and intent.
-    # 中文：_backoff 的核心行为与设计意图。
     def _backoff(self, attempt: int) -> None:
         """Exponential backoff before next retry. / 指数退避后再次重试。"""
         sleep_s = (self.backoff_base ** attempt) + random.random()

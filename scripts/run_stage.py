@@ -22,7 +22,6 @@ from drugpipe.config import load_config
 from drugpipe.pipeline import run_hit_to_lead, run_target_discovery, run_target_to_hit
 
 
-# EN: main core behavior and intent.
 # 中文：main 的核心行为与设计意图。
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a single DrugPipe stage.")

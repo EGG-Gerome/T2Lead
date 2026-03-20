@@ -1,4 +1,4 @@
 """Stage 4 — Lead Optimization: docking, enhanced ADMET, MD simulation."""
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Stage 4 — Lead Optimization: docking, enhanced ADMET, MD simulation.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 

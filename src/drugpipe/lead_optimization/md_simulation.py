@@ -10,8 +10,8 @@ Required dependencies:
 Optional:
   - mdtraj              (conda install -c conda-forge mdtraj)
 """
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Short molecular-dynamics simulation and MM-GBSA binding energy via OpenMM.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 短时 MD 模拟与 MM-GBSA 结合自由能（OpenMM + GAFF2 小分子力场）。
 
@@ -54,8 +54,6 @@ except ImportError:
     _MDTRAJ_OK = False
 
 
-# EN: _select_platform core behavior and intent.
-# 中文：_select_platform 的核心行为与设计意图。
 def _select_platform(device: str) -> Tuple[Optional[str], Dict[str, str]]:
     """Choose OpenMM platform based on user config."""
     if not _OPENMM_OK:
@@ -80,8 +78,6 @@ def _select_platform(device: str) -> Tuple[Optional[str], Dict[str, str]]:
     return None, {}
 
 
-# EN: _smiles_to_3d_pdb core behavior and intent.
-# 中文：_smiles_to_3d_pdb 的核心行为与设计意图。
 def _smiles_to_3d_pdb(smiles: str) -> Optional[str]:
     """Generate a 3D PDB block from a SMILES string."""
     mol = safe_mol(smiles)
@@ -99,13 +95,9 @@ def _smiles_to_3d_pdb(smiles: str) -> Optional[str]:
     return Chem.MolToPDBBlock(mol)
 
 
-# EN: MDSimulator core behavior and intent.
-# 中文：MDSimulator 的核心行为与设计意图。
 class MDSimulator:
     """Run short MD simulations and compute MM-GBSA binding energies."""
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         lo = cfg.get("lead_optimization", {})
         md = lo.get("md_simulation", {})
@@ -119,8 +111,6 @@ class MDSimulator:
         self.platform, self.platform_props = _select_platform(device_str)
 
     # ------------------------------------------------------------------
-    # EN: run core behavior and intent.
-    # 中文：run 的核心行为与设计意图。
     def run(
         self,
         df: pd.DataFrame,
@@ -182,8 +172,6 @@ class MDSimulator:
         return df
 
     # ------------------------------------------------------------------
-    # EN: _select_candidates core behavior and intent.
-    # 中文：_select_candidates 的核心行为与设计意图。
     def _select_candidates(self, df: pd.DataFrame) -> List[int]:
         """Pick top-N molecules with best docking scores for MD."""
         if "docking_score" in df.columns:
@@ -192,8 +180,6 @@ class MDSimulator:
         return df.head(self.top_n).index.tolist()
 
     # ------------------------------------------------------------------
-    # EN: _simulate_one core behavior and intent.
-    # 中文：_simulate_one 的核心行为与设计意图。
     def _simulate_one(
         self,
         smiles: str,
@@ -235,8 +221,6 @@ class MDSimulator:
             return None, None
 
     # ------------------------------------------------------------------
-    # EN: _gb_energy_complex core behavior and intent.
-    # 中文：_gb_energy_complex 的核心行为与设计意图。
     def _gb_energy_complex(
         self, receptor_pdb: str, ligand_smi: str, off_mol: Any,
     ) -> Optional[float]:
@@ -264,8 +248,6 @@ class MDSimulator:
             logger.debug("Complex GB energy failed: %s", exc)
             return None
 
-    # EN: _gb_energy_receptor core behavior and intent.
-    # 中文：_gb_energy_receptor 的核心行为与设计意图。
     def _gb_energy_receptor(self, receptor_pdb: str) -> Optional[float]:
         """GB energy of the receptor alone (no GAFF needed)."""
         try:
@@ -277,8 +259,6 @@ class MDSimulator:
             logger.debug("Receptor GB energy failed: %s", exc)
             return None
 
-    # EN: _gb_energy_ligand core behavior and intent.
-    # 中文：_gb_energy_ligand 的核心行为与设计意图。
     def _gb_energy_ligand(self, ligand_smi: str, off_mol: Any) -> Optional[float]:
         """GB energy of the ligand alone, parameterized with GAFF2."""
         lig_pdb = _smiles_to_3d_pdb(ligand_smi)
@@ -302,8 +282,6 @@ class MDSimulator:
             return None
 
     # ------------------------------------------------------------------
-    # EN: _minimise_and_energy core behavior and intent.
-    # 中文：_minimise_and_energy 的核心行为与设计意图。
     def _minimise_and_energy(
         self, forcefield: Any, modeller: Any, max_iter: int = 1000,
     ) -> Optional[float]:

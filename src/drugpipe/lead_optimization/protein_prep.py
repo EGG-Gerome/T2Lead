@@ -8,8 +8,8 @@ Optional dependencies:
   - pdbfixer  (conda install -c conda-forge pdbfixer)
   - meeko     (pip install meeko)
 """
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Protein structure retrieval and preparation for molecular docking / MD.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 蛋白结构获取与准备：从 RCSB 下载 PDB → PDBFixer 清洗 → 识别结合位点 → 转换为 PDBQT。
 
@@ -43,8 +43,6 @@ _AD4_TYPE = {
 _ESMFOLD_URL = "https://api.esmatlas.com/foldSequence/v1/pdb/"
 
 
-# EN: ProteinPreparator core behavior and intent.
-# 中文：ProteinPreparator 的核心行为与设计意图。
 class ProteinPreparator:
     """Fetch, fix, and prepare a protein structure for docking / MD.
 
@@ -54,8 +52,6 @@ class ProteinPreparator:
       3. ESMFold API prediction from amino-acid ``protein_sequence``
     """
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         lo = cfg.get("lead_optimization", {})
         self.pdb_id = (lo.get("pdb_id", "") or "").strip().upper()
@@ -66,8 +62,6 @@ class ProteinPreparator:
         self._cfg_box: List[float] = bs.get("box_size", [25.0, 25.0, 25.0])
 
     # ------------------------------------------------------------------
-    # EN: prepare core behavior and intent.
-    # 中文：prepare 的核心行为与设计意图。
     def prepare(self, out_dir: Path) -> Optional[Dict[str, Any]]:
         """Download PDB, fix, detect binding site, write PDBQT receptor.
 
@@ -96,8 +90,6 @@ class ProteinPreparator:
         }
 
     # ------------------------------------------------------------------
-    # EN: _fetch_pdb core behavior and intent.
-    # 中文：_fetch_pdb 的核心行为与设计意图。
     def _fetch_pdb(self, out_dir: Path) -> Optional[Path]:
         """Obtain a PDB structure: RCSB download → local file → ESMFold prediction."""
         if self.pdb_id:
@@ -126,8 +118,6 @@ class ProteinPreparator:
         return None
 
     # ------------------------------------------------------------------
-    # EN: _predict_structure_esmfold core behavior and intent.
-    # 中文：_predict_structure_esmfold 的核心行为与设计意图。
     def _predict_structure_esmfold(self, out_dir: Path) -> Optional[Path]:
         """Predict 3D structure from amino-acid sequence via ESMFold API.
 
@@ -177,8 +167,6 @@ class ProteinPreparator:
         return dest
 
     # ------------------------------------------------------------------
-    # EN: _fix_structure core behavior and intent.
-    # 中文：_fix_structure 的核心行为与设计意图。
     def _fix_structure(self, pdb_path: Path, out_dir: Path) -> Path:
         """Use PDBFixer to add missing *side-chain* atoms and hydrogens.
 
@@ -209,8 +197,6 @@ class ProteinPreparator:
         return fixed
 
     # ------------------------------------------------------------------
-    # EN: _detect_binding_site core behavior and intent.
-    # 中文：_detect_binding_site 的核心行为与设计意图。
     def _detect_binding_site(
         self, pdb_path: Path
     ) -> Tuple[List[float], List[float]]:
@@ -243,8 +229,6 @@ class ProteinPreparator:
         return center, box
 
     @staticmethod
-    # EN: _hetatm_coords core behavior and intent.
-    # 中文：_hetatm_coords 的核心行为与设计意图。
     def _hetatm_coords(pdb_path: Path) -> List[List[float]]:
         """Extract XYZ of HETATM atoms that are not water (HOH/WAT)."""
         skip = {"HOH", "WAT", "DOD"}
@@ -265,8 +249,6 @@ class ProteinPreparator:
         return coords
 
     # ------------------------------------------------------------------
-    # EN: _pdb_to_pdbqt core behavior and intent.
-    # 中文：_pdb_to_pdbqt 的核心行为与设计意图。
     def _pdb_to_pdbqt(self, pdb_path: Path, out_dir: Path) -> Optional[Path]:
         """Convert fixed PDB receptor to PDBQT for AutoDock Vina.
 
@@ -318,8 +300,6 @@ class ProteinPreparator:
         return pdbqt
 
 
-# EN: _ad4_atom_type core behavior and intent.
-# 中文：_ad4_atom_type 的核心行为与设计意图。
 def _ad4_atom_type(element: str, atom_name: str) -> str:
     """Map element + atom name to a valid AutoDock 4 atom type."""
     el = element.upper()

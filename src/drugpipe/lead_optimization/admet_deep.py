@@ -9,8 +9,8 @@ Computed properties:
   - Veber oral bioavailability rules    (RotBonds ≤ 10, TPSA ≤ 140)
   - Composite ADMET risk score          (0 = low risk … 1 = high risk)
 """
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Enhanced ADMET profiling beyond basic Lipinski / QED.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 增强 ADMET 评估：合成可及性、hERG 毒性、CYP 抑制风险、Veber 规则、综合风险评分。
 
@@ -72,13 +72,9 @@ _CYP_SMARTS = [
 _CYP_SMARTS = [p for p in _CYP_SMARTS if p is not None]
 
 
-# EN: DeepADMET core behavior and intent.
-# 中文：DeepADMET 的核心行为与设计意图。
 class DeepADMET:
     """Enhanced ADMET profiling for lead candidates."""
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         lo = cfg.get("lead_optimization", {})
         ad = lo.get("admet_deep", {})
@@ -87,8 +83,6 @@ class DeepADMET:
         self.herg_filter = bool(ad.get("herg_filter", True))
 
     # ------------------------------------------------------------------
-    # EN: profile core behavior and intent.
-    # 中文：profile 的核心行为与设计意图。
     def profile(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add ADMET columns and a composite ``admet_risk`` score."""
         df = df.copy()
@@ -131,8 +125,6 @@ class DeepADMET:
 
     # ------------------------------------------------------------------
     @staticmethod
-    # EN: _sa_score core behavior and intent.
-    # 中文：_sa_score 的核心行为与设计意图。
     def _sa_score(mol: Chem.Mol) -> float:
         if _SA_SCORER is not None:
             try:
@@ -145,29 +137,21 @@ class DeepADMET:
         return min(1.0 + ha * 0.05 + rings * 0.3, 10.0)
 
     @staticmethod
-    # EN: _herg_liability core behavior and intent.
-    # 中文：_herg_liability 的核心行为与设计意图。
     def _herg_liability(mol: Chem.Mol) -> bool:
         return any(mol.HasSubstructMatch(pat) for pat in _HERG_SMARTS)
 
     @staticmethod
-    # EN: _cyp_inhibition core behavior and intent.
-    # 中文：_cyp_inhibition 的核心行为与设计意图。
     def _cyp_inhibition(mol: Chem.Mol) -> bool:
         matches = sum(1 for pat in _CYP_SMARTS if mol.HasSubstructMatch(pat))
         return matches >= 2  # flag when ≥2 pharmacophores present
 
     @staticmethod
-    # EN: _veber_rules core behavior and intent.
-    # 中文：_veber_rules 的核心行为与设计意图。
     def _veber_rules(mol: Chem.Mol) -> bool:
         """Veber rules for oral bioavailability."""
         rotb = Lipinski.NumRotatableBonds(mol)
         tpsa = Descriptors.TPSA(mol)
         return rotb <= 10 and tpsa <= 140
 
-    # EN: _composite_risk core behavior and intent.
-    # 中文：_composite_risk 的核心行为与设计意图。
     def _composite_risk(
         self,
         sa: float,

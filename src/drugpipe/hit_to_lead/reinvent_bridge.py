@@ -10,8 +10,8 @@ Requirements:
   - A prior model file (e.g. ``pubchem_ecfp4_…_reinvent4_dict_voc.prior``)
   - Paths set in ``configs/default_config.yaml`` → ``hit_to_lead.reinvent4``
 """
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Optional REINVENT4 integration for RL-based molecular optimization.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 可选 REINVENT4 集成：基于强化学习的分子优化；生成配置、以子进程启动并收集输出 SMILES。
 
@@ -88,14 +88,10 @@ ExternalProcess.weight = 0.8
 """
 
 
-# EN: Reinvent4Bridge core behavior and intent.
-# 中文：Reinvent4Bridge 的核心行为与设计意图。
 class Reinvent4Bridge:
     """Generate molecules via REINVENT4 RL optimization."""
     # 通过 REINVENT4 强化学习优化生成分子。
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         r4 = cfg.get("hit_to_lead", {}).get("reinvent4", {})
         self.enabled = bool(r4.get("enabled", False))
@@ -105,8 +101,6 @@ class Reinvent4Bridge:
         self.n_steps = int(r4.get("n_steps", 100))
 
     # ------------------------------------------------------------------
-    # EN: run core behavior and intent.
-    # 中文：run 的核心行为与设计意图。
     def run(
         self,
         df_hits: pd.DataFrame,
@@ -181,8 +175,6 @@ class Reinvent4Bridge:
 
     # ------------------------------------------------------------------
     @staticmethod
-    # EN: _write_scoring_script core behavior and intent.
-    # 中文：_write_scoring_script 的核心行为与设计意图。
     def _write_scoring_script(
         out_dir: Path,
         model_predict_fn,
@@ -227,8 +219,6 @@ for v in preds_norm:
 
     # ------------------------------------------------------------------
     @staticmethod
-    # EN: _parse_output core behavior and intent.
-    # 中文：_parse_output 的核心行为与设计意图。
     def _parse_output(csv_path: Path) -> pd.DataFrame:
         if not csv_path.exists():
             logger.warning("REINVENT4 output file not found: %s", csv_path)

@@ -1,6 +1,6 @@
 """Final lead ranking: combine all candidates, filter, rank by MPO, and output."""
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Final lead ranking: combine all candidates, filter, rank by MPO, and output.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 最终先导排序：合并所有候选、过滤、按 MPO 排序并输出。
 
@@ -20,8 +20,6 @@ from drugpipe.hit_to_lead.scaffold import ScaffoldAnalyzer
 logger = logging.getLogger(__name__)
 
 
-# EN: LeadRanker core behavior and intent.
-# 中文：LeadRanker 的核心行为与设计意图。
 class LeadRanker:
     """
     Orchestrate the full Hit-to-Lead stage:
@@ -33,8 +31,6 @@ class LeadRanker:
     """
     # 编排完整 Hit-to-Lead 阶段：骨架分析 → 多样性聚类 → 类似物生成(CReM) → MPO 打分 → 最终排序输出。
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any], out_dir: Path):
         self.cfg = cfg
         self.out_dir = out_dir
@@ -52,8 +48,6 @@ class LeadRanker:
         self.leads_csv = out_dir / "final_lead_candidates.csv"
 
     # ------------------------------------------------------------------
-    # EN: run core behavior and intent.
-    # 中文：run 的核心行为与设计意图。
     def run(
         self,
         df_hits: pd.DataFrame,
@@ -110,8 +104,6 @@ class LeadRanker:
         return df_leads
 
     # ------------------------------------------------------------------
-    # EN: _rank_and_output core behavior and intent.
-    # 中文：_rank_and_output 的核心行为与设计意图。
     def _rank_and_output(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sort by MPO, take top-N, write CSV. / 按 MPO 排序、取 top-N、写入 CSV。"""
         df = df.dropna(subset=["mpo_score"])

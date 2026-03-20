@@ -1,6 +1,6 @@
 """Butina clustering for chemical diversity analysis of hit compounds."""
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Butina clustering for chemical diversity analysis of hit compounds.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # Butina 聚类，用于 hit 化合物的化学多样性分析。
 
@@ -21,8 +21,6 @@ from drugpipe.utils.chem import safe_mol
 logger = logging.getLogger(__name__)
 
 
-# EN: DiversityClusterer core behavior and intent.
-# 中文：DiversityClusterer 的核心行为与设计意图。
 class DiversityClusterer:
     """
     Cluster hit molecules using Butina algorithm on Tanimoto distance,
@@ -30,15 +28,11 @@ class DiversityClusterer:
     """
     # 基于 Tanimoto 距离用 Butina 算法对 hit 分子聚类，每类取一代表（质心）。
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         h2l = cfg.get("hit_to_lead", {})
         self.cutoff = float(h2l.get("clustering", {}).get("tanimoto_cutoff", 0.4))
 
     # ------------------------------------------------------------------
-    # EN: cluster core behavior and intent.
-    # 中文：cluster 的核心行为与设计意图。
     def cluster(self, df_hits: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Parameters
@@ -98,8 +92,6 @@ class DiversityClusterer:
 
     # ------------------------------------------------------------------
     @staticmethod
-    # EN: _compute_fps core behavior and intent.
-    # 中文：_compute_fps 的核心行为与设计意图。
     def _compute_fps(smiles_list: List[str]) -> List:
         fps = []
         for smi in smiles_list:
@@ -111,8 +103,6 @@ class DiversityClusterer:
         return fps
 
     @staticmethod
-    # EN: _tanimoto_distance_matrix core behavior and intent.
-    # 中文：_tanimoto_distance_matrix 的核心行为与设计意图。
     def _tanimoto_distance_matrix(fps: list) -> List[float]:
         """Flat lower-triangular distance list required by Butina."""
         # Butina 所需的扁平下三角距离列表。

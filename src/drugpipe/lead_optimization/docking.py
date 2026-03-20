@@ -8,8 +8,8 @@ Optional dependencies:
   - vina   (pip install vina)
   - meeko  (pip install meeko)
 """
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Molecular docking module using AutoDock Vina.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 分子对接模块（AutoDock Vina）：SMILES → 3D 构象 → 对接 → 打分，支持分子级并行。
 
@@ -44,8 +44,6 @@ except ImportError:
     _MEEKO_OK = False
 
 
-# EN: VinaDocking core behavior and intent.
-# 中文：VinaDocking 的核心行为与设计意图。
 class VinaDocking:
     """Batch molecular docking with AutoDock Vina.
 
@@ -54,8 +52,6 @@ class VinaDocking:
     stays near 100%.
     """
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         lo = cfg.get("lead_optimization", {})
         dk = lo.get("docking", {})
@@ -66,8 +62,6 @@ class VinaDocking:
         self.n_cpus = int(dk.get("n_cpus", 0))  # 0 = auto-detect
 
     # ------------------------------------------------------------------
-    # EN: dock_leads core behavior and intent.
-    # 中文：dock_leads 的核心行为与设计意图。
     def dock_leads(
         self,
         df: pd.DataFrame,
@@ -160,8 +154,6 @@ class VinaDocking:
 
     # ------------------------------------------------------------------
     @staticmethod
-    # EN: _store_result core behavior and intent.
-    # 中文：_store_result 的核心行为与设计意图。
     def _store_result(
         df: pd.DataFrame, idx: int,
         score: Optional[float], pose_path: Optional[str],
@@ -171,8 +163,6 @@ class VinaDocking:
             df.at[idx, "docking_pose_file"] = pose_path or ""
 
     @staticmethod
-    # EN: _update_counts core behavior and intent.
-    # 中文：_update_counts 的核心行为与设计意图。
     def _update_counts(
         score: Optional[float],
         n_docked: int, n_failed: int, i: int, n_total: int,
@@ -191,8 +181,6 @@ class VinaDocking:
 # Top-level function for multiprocessing (must be picklable)
 # ======================================================================
 
-# EN: _dock_one_standalone core behavior and intent.
-# 中文：_dock_one_standalone 的核心行为与设计意图。
 def _dock_one_standalone(
     smiles: str,
     receptor_pdbqt: str,
@@ -240,8 +228,6 @@ def _dock_one_standalone(
 # Standalone helpers (module-level for pickling by ProcessPoolExecutor)
 # ======================================================================
 
-# EN: _embed_3d core behavior and intent.
-# 中文：_embed_3d 的核心行为与设计意图。
 def _embed_3d(mol: Chem.Mol) -> Optional[Chem.Mol]:
     """Generate a 3-D conformer via ETKDG."""
     mol = Chem.AddHs(mol)
@@ -259,8 +245,6 @@ def _embed_3d(mol: Chem.Mol) -> Optional[Chem.Mol]:
     return mol
 
 
-# EN: _mol_to_pdbqt core behavior and intent.
-# 中文：_mol_to_pdbqt 的核心行为与设计意图。
 def _mol_to_pdbqt(mol: Chem.Mol) -> Optional[str]:
     """Convert an RDKit Mol with 3-D coords to a PDBQT string for Vina."""
     if _MEEKO_OK:
@@ -286,8 +270,6 @@ def _mol_to_pdbqt(mol: Chem.Mol) -> Optional[str]:
     return None
 
 
-# EN: _pdb_to_pdbqt_naive core behavior and intent.
-# 中文：_pdb_to_pdbqt_naive 的核心行为与设计意图。
 def _pdb_to_pdbqt_naive(pdb_block: str) -> str:
     """Minimal PDB → PDBQT with correct fixed-width column layout."""
     ad4 = {"C": "C", "N": "NA", "O": "OA", "S": "SA", "H": "HD",

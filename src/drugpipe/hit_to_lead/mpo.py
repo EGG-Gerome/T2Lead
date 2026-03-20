@@ -1,6 +1,6 @@
 """Multi-Parameter Optimization (MPO) scoring for lead prioritization."""
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Multi-Parameter Optimization (MPO) scoring for lead prioritization.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 多参数优化（MPO）打分，用于先导化合物排序。
 
@@ -22,8 +22,6 @@ from drugpipe.utils.chem import (
 logger = logging.getLogger(__name__)
 
 
-# EN: MPOScorer core behavior and intent.
-# 中文：MPOScorer 的核心行为与设计意图。
 class MPOScorer:
     """
     Score candidate molecules using a weighted combination of:
@@ -34,8 +32,6 @@ class MPOScorer:
     """
     # 用加权组合对候选分子打分：预测效力(pIC50)、类药性(QED)、ADMET 通过(0/1)、结构新颖性。
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         h2l = cfg.get("hit_to_lead", {})
         mpo = h2l.get("mpo", {})
@@ -58,8 +54,6 @@ class MPOScorer:
         }
 
     # ------------------------------------------------------------------
-    # EN: score core behavior and intent.
-    # 中文：score 的核心行为与设计意图。
     def score(
         self,
         df: pd.DataFrame,
@@ -104,8 +98,6 @@ class MPOScorer:
         return df
 
     # ------------------------------------------------------------------
-    # EN: _ensure_properties core behavior and intent.
-    # 中文：_ensure_properties 的核心行为与设计意图。
     def _ensure_properties(self, df: pd.DataFrame) -> None:
         """Compute QED / descriptors / ADMET pass for rows missing them."""
         # 对缺失性质的行计算 QED、描述符与 ADMET 通过情况。
@@ -145,8 +137,6 @@ class MPOScorer:
                     desc = calc_descriptors(mol)
                 df.at[idx, "admet_pass"] = self._rules_pass(desc) and not df.at[idx, "HasAlert"]
 
-    # EN: _rules_pass core behavior and intent.
-    # 中文：_rules_pass 的核心行为与设计意图。
     def _rules_pass(self, desc: Dict[str, Any]) -> bool:
         """Check if descriptor dict satisfies ADMET rules. / 检查描述符是否满足 ADMET 规则。"""
         r = self.rules
@@ -161,8 +151,6 @@ class MPOScorer:
         )
 
     @staticmethod
-    # EN: _normalize core behavior and intent.
-    # 中文：_normalize 的核心行为与设计意图。
     def _normalize(s: pd.Series) -> pd.Series:
         """Min-max normalize to [0, 1]."""
         # 最小-最大归一化到 [0, 1]。

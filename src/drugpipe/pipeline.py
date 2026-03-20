@@ -1,6 +1,6 @@
 """Four-stage pipeline orchestrator: Target Discovery → T2H → H2L → Lead Optimization."""
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Four-stage pipeline orchestrator: Target Discovery → T2H → H2L → Lead Optimization.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 四阶段流水线编排器：靶点发现 → 靶点到苗头 → 苗头到先导 → 先导优化。
 
@@ -24,8 +24,6 @@ RDLogger.DisableLog("rdApp.warning")
 logger = logging.getLogger(__name__)
 
 
-# EN: _set_seed core behavior and intent.
-# 中文：_set_seed 的核心行为与设计意图。
 def _set_seed(seed: int) -> None:
     """EN: Set deterministic seeds for Python, NumPy and Torch.
     中文：为 Python、NumPy 和 Torch 设置可复现随机种子。
@@ -45,8 +43,6 @@ def _set_seed(seed: int) -> None:
 # 靶点可用性检查
 # ======================================================================
 
-# EN: _pick_viable_target core behavior and intent.
-# 中文：_pick_viable_target 的核心行为与设计意图。
 def _pick_viable_target(
     cfg: Dict[str, Any],
     targets: List[Dict[str, Any]],
@@ -97,8 +93,6 @@ def _pick_viable_target(
 # 各阶段执行函数
 # ======================================================================
 
-# EN: run_target_discovery core behavior and intent.
-# 中文：run_target_discovery 的核心行为与设计意图。
 def run_target_discovery(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     """EN: Stage 1 - identify disease-relevant therapeutic targets.
     中文：阶段 1：识别与疾病相关的治疗靶点。
@@ -111,8 +105,6 @@ def run_target_discovery(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return targets
 
 
-# EN: run_target_to_hit core behavior and intent.
-# 中文：run_target_to_hit 的核心行为与设计意图。
 def run_target_to_hit(
     cfg: Dict[str, Any],
     target_chembl_id: Optional[str] = None,
@@ -207,8 +199,6 @@ def run_target_to_hit(
     return df_hits
 
 
-# EN: run_hit_to_lead core behavior and intent.
-# 中文：run_hit_to_lead 的核心行为与设计意图。
 def run_hit_to_lead(
     cfg: Dict[str, Any],
     df_hits: pd.DataFrame,
@@ -239,8 +229,6 @@ def run_hit_to_lead(
     return df_leads
 
 
-# EN: run_lead_optimization core behavior and intent.
-# 中文：run_lead_optimization 的核心行为与设计意图。
 def run_lead_optimization(
     cfg: Dict[str, Any],
     df_leads: pd.DataFrame,
@@ -263,8 +251,6 @@ def run_lead_optimization(
 # 完整流水线
 # ======================================================================
 
-# EN: _disease_slug core behavior and intent.
-# 中文：_disease_slug 的核心行为与设计意图。
 def _disease_slug(disease: str) -> str:
     """EN: Convert disease text into a filesystem-safe slug.
     中文：将疾病名称转换为文件系统安全的目录名。
@@ -276,8 +262,6 @@ def _disease_slug(disease: str) -> str:
     return slug or "default"
 
 
-# EN: run_pipeline core behavior and intent.
-# 中文：run_pipeline 的核心行为与设计意图。
 def run_pipeline(cfg: Dict[str, Any]) -> None:
     """EN: Execute stages listed in `pipeline.stages` with shared state handoff.
     中文：按 `pipeline.stages` 顺序执行各阶段，并在阶段间传递中间结果。
@@ -382,8 +366,6 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
     logger.info("=" * 60)
 
 
-# EN: _override_out_dir core behavior and intent.
-# 中文：_override_out_dir 的核心行为与设计意图。
 def _override_out_dir(cfg: Dict[str, Any], out_dir: Path) -> Dict[str, Any]:
     """EN: Return a deep-copied config with `pipeline.out_dir` overridden.
     中文：返回深拷贝后的配置，并覆写 `pipeline.out_dir`。
@@ -399,8 +381,6 @@ def _override_out_dir(cfg: Dict[str, Any], out_dir: Path) -> Dict[str, Any]:
 # 命令行入口
 # ======================================================================
 
-# EN: main core behavior and intent.
-# 中文：main 的核心行为与设计意图。
 def main() -> None:
     """EN: CLI entry point that parses args, builds config, and runs pipeline.
     中文：命令行入口：解析参数、构建配置并启动流水线。
@@ -494,8 +474,6 @@ def main() -> None:
 # File logging
 # ======================================================================
 
-# EN: _setup_file_logging core behavior and intent.
-# 中文：_setup_file_logging 的核心行为与设计意图。
 def _setup_file_logging(
     cfg: Dict[str, Any], level: int, fmt: str,
 ) -> None:
@@ -539,8 +517,6 @@ def _setup_file_logging(
     sh.setLevel(logging.WARNING)
     sh.setFormatter(logging.Formatter(fmt))
 
-    # EN: _InfoKeywordFilter core behavior and intent.
-    # 中文：_InfoKeywordFilter 的核心行为与设计意图。
     class _InfoKeywordFilter(logging.Filter):
         _KEYWORDS = (
             "Stage", "complete", "Selected target", "PIPELINE",

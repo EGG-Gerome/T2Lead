@@ -1,6 +1,6 @@
 """ChEMBL REST API crawler with checkpoint-based resume and rate limiting."""
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: ChEMBL REST API crawler with checkpoint-based resume and rate limiting.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # ChEMBL REST API 爬虫，支持断点续跑与请求限速。
 
@@ -18,8 +18,6 @@ from drugpipe.utils.io import append_csv, load_state, save_state
 logger = logging.getLogger(__name__)
 
 
-# EN: ChEMBLCrawler core behavior and intent.
-# 中文：ChEMBLCrawler 的核心行为与设计意图。
 class ChEMBLCrawler:
     """
     Download molecules (SMILES) and IC50 activity data from ChEMBL.
@@ -31,8 +29,6 @@ class ChEMBLCrawler:
     """
     # 从 ChEMBL 下载分子（SMILES）与 IC50 活性数据；支持可配置分页与上限、JSON 断点续跑、请求间延时。
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any], out_dir: Path):
         ch = cfg.get("target_to_hit", {}).get("chembl", {})
         self.base_url = ch.get("base_url", "https://www.ebi.ac.uk/chembl/api/data")
@@ -56,8 +52,6 @@ class ChEMBLCrawler:
     # Molecules
     # 分子爬取
     # ==================================================================
-    # EN: crawl_molecules core behavior and intent.
-    # 中文：crawl_molecules 的核心行为与设计意图。
     def crawl_molecules(self) -> Path:
         """Crawl molecule records (chembl_id + canonical_smiles)."""
         # 爬取分子记录（chembl_id + canonical_smiles）。
@@ -105,8 +99,6 @@ class ChEMBLCrawler:
     # IC50 Activities
     # IC50 活性爬取
     # ==================================================================
-    # EN: crawl_activities core behavior and intent.
-    # 中文：crawl_activities 的核心行为与设计意图。
     def crawl_activities(self) -> Path:
         """Crawl IC50 activity records."""
         # 爬取 IC50 活性记录。
@@ -164,8 +156,6 @@ class ChEMBLCrawler:
     # 内部方法
     # ==================================================================
     @staticmethod
-    # EN: _extract_molecules core behavior and intent.
-    # 中文：_extract_molecules 的核心行为与设计意图。
     def _extract_molecules(items: List[Dict]) -> List[Dict[str, str]]:
         rows: List[Dict[str, str]] = []
         for it in items:
@@ -176,8 +166,6 @@ class ChEMBLCrawler:
                 rows.append({"molecule_chembl_id": cid, "canonical_smiles": smi})
         return rows
 
-    # EN: _extract_activities core behavior and intent.
-    # 中文：_extract_activities 的核心行为与设计意图。
     def _extract_activities(self, items: List[Dict]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         for it in items:

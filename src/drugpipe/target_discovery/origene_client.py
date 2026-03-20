@@ -7,8 +7,8 @@ interface to a running OriGene instance (which in turn relies on OrigeneMCP).
 If the user has not deployed OriGene, the rest of the pipeline still works —
 this stage is optional.
 """
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Wrapper for calling a locally deployed OriGene agent.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 调用本地部署的 OriGene 代理的封装。OriGene 为多智能体虚拟疾病生物学家，本模块提供对其 HTTP 接口的薄封装；未部署时流水线其余阶段仍可运行。
 
@@ -23,14 +23,10 @@ from drugpipe.utils.http import HTTPClient
 logger = logging.getLogger(__name__)
 
 
-# EN: OriGeneClient core behavior and intent.
-# 中文：OriGeneClient 的核心行为与设计意图。
 class OriGeneClient:
     """Send a target-discovery query to a running OriGene service."""
     # 向运行中的 OriGene 服务发送靶点发现查询。
 
-    # EN: __init__ core behavior and intent.
-    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         og_cfg = cfg.get("target_discovery", {}).get("origene", {})
         self.server_url = og_cfg.get("server_url", "http://127.0.0.1:8788")
@@ -38,8 +34,6 @@ class OriGeneClient:
         self.http = HTTPClient(timeout=300, retries=2, backoff_base=5.0)
 
     # ------------------------------------------------------------------
-    # EN: query core behavior and intent.
-    # 中文：query 的核心行为与设计意图。
     def query(self, disease: str) -> Dict[str, Any]:
         """
         Ask OriGene for therapeutic target recommendations.
@@ -62,8 +56,6 @@ class OriGeneClient:
             return {}
 
     # ------------------------------------------------------------------
-    # EN: discover core behavior and intent.
-    # 中文：discover 的核心行为与设计意图。
     def discover(self, disease: str) -> List[Dict[str, Any]]:
         """
         High-level: query OriGene and extract target information.
@@ -82,8 +74,6 @@ class OriGeneClient:
 
     # ------------------------------------------------------------------
     @staticmethod
-    # EN: _parse_targets core behavior and intent.
-    # 中文：_parse_targets 的核心行为与设计意图。
     def _parse_targets(text: str) -> List[Dict[str, Any]]:
         """Best-effort extraction of target info from free-text report."""
         # 从自由文本报告中尽力提取靶点信息。

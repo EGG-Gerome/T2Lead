@@ -1,6 +1,6 @@
 """Configuration loader: YAML file + environment variable overrides."""
-# EN: Module overview and key intent for maintainers.
-# 中文：模块总览与关键设计意图，便于后续维护。
+# EN: Configuration loader: YAML file + environment variable overrides.
+# 中文：说明模块职责、上下游关系与维护注意事项。
 
 # 配置加载：YAML 文件 + 环境变量覆盖。
 
@@ -17,8 +17,6 @@ from dotenv import load_dotenv
 _DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "configs" / "default_config.yaml"
 
 
-# EN: _deep_merge core behavior and intent.
-# 中文：_deep_merge 的核心行为与设计意图。
 def _deep_merge(base: dict, override: dict) -> dict:
     """EN: Recursively merge `override` into `base` in place.
     中文：将 `override` 递归合并到 `base`，会原地修改 `base`。
@@ -31,8 +29,6 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return base
 
 
-# EN: _apply_env_overrides core behavior and intent.
-# 中文：_apply_env_overrides 的核心行为与设计意图。
 def _apply_env_overrides(cfg: dict, prefix: str = "DP") -> dict:
     """EN: Map environment variables with a prefix into nested config keys.
     中文：将指定前缀的环境变量映射为嵌套配置字段。
@@ -56,8 +52,6 @@ def _apply_env_overrides(cfg: dict, prefix: str = "DP") -> dict:
     return cfg
 
 
-# EN: _auto_cast core behavior and intent.
-# 中文：_auto_cast 的核心行为与设计意图。
 def _auto_cast(val: str) -> Any:
     """EN: Cast env string to bool/int/float/str when possible.
     中文：尽可能将环境变量字符串转换为 bool/int/float/str。
@@ -77,8 +71,6 @@ def _auto_cast(val: str) -> Any:
     return val
 
 
-# EN: load_config core behavior and intent.
-# 中文：load_config 的核心行为与设计意图。
 def load_config(
     config_path: str | Path | None = None,
     overrides: Dict[str, Any] | None = None,
@@ -115,8 +107,6 @@ def load_config(
     return cfg
 
 
-# EN: get_out_dir core behavior and intent.
-# 中文：get_out_dir 的核心行为与设计意图。
 def get_out_dir(cfg: Dict[str, Any]) -> Path:
     """EN: Return output directory and create it when missing.
     中文：返回输出目录，并在不存在时自动创建。
