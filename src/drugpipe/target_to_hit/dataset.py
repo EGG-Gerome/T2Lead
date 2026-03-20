@@ -1,4 +1,7 @@
 """Build a training dataset for a specific target from crawled ChEMBL data."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 从爬取的 ChEMBL 数据为指定靶点构建训练数据集。
 
 from __future__ import annotations
@@ -21,6 +24,8 @@ from drugpipe.utils.chem import (
 logger = logging.getLogger(__name__)
 
 
+# EN: DatasetBuilder core behavior and intent.
+# 中文：DatasetBuilder 的核心行为与设计意图。
 class DatasetBuilder:
     """
     Join molecules + activities for a given target, compute pIC50,
@@ -28,6 +33,8 @@ class DatasetBuilder:
     """
     # 合并指定靶点的分子与活性，计算 pIC50、描述符、QED 与结构警示。
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any], out_dir: Path):
         t2h = cfg.get("target_to_hit", {})
         self.min_train = int(t2h.get("dataset", {}).get("min_train_samples", 200))
@@ -35,6 +42,8 @@ class DatasetBuilder:
         self.dataset_csv = out_dir / "dataset_target_ic50.csv"
 
     # ------------------------------------------------------------------
+    # EN: build core behavior and intent.
+    # 中文：build 的核心行为与设计意图。
     def build(
         self,
         molecules_csv: Path,
@@ -81,17 +90,23 @@ class DatasetBuilder:
 
     # ------------------------------------------------------------------
     @staticmethod
+    # EN: _load_molecules core behavior and intent.
+    # 中文：_load_molecules 的核心行为与设计意图。
     def _load_molecules(path: Path) -> pd.DataFrame:
         df = pd.read_csv(path)
         df = df.dropna(subset=["molecule_chembl_id", "canonical_smiles"])
         return df.drop_duplicates("molecule_chembl_id")
 
     @staticmethod
+    # EN: _load_activities core behavior and intent.
+    # 中文：_load_activities 的核心行为与设计意图。
     def _load_activities(path: Path) -> pd.DataFrame:
         df = pd.read_csv(path)
         return df.dropna(subset=["molecule_chembl_id", "target_chembl_id", "standard_value"])
 
     @staticmethod
+    # EN: _auto_select_target core behavior and intent.
+    # 中文：_auto_select_target 的核心行为与设计意图。
     def _auto_select_target(df_act: pd.DataFrame) -> str:
         """Pick the target with most IC50 records. / 选择 IC50 记录数最多的靶点。"""
         vc = df_act["target_chembl_id"].value_counts()
@@ -102,6 +117,8 @@ class DatasetBuilder:
         return target
 
     @staticmethod
+    # EN: _add_mol_properties core behavior and intent.
+    # 中文：_add_mol_properties 的核心行为与设计意图。
     def _add_mol_properties(df: pd.DataFrame) -> pd.DataFrame:
         """Compute QED, descriptors, and structural alerts for valid SMILES."""
         # 对有效 SMILES 计算 QED、描述符与结构警示。

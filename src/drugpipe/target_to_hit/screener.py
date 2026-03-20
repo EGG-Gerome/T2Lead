@@ -1,4 +1,7 @@
 """Virtual screening: score all molecules using trained models."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 虚拟筛选：用训练好的模型对所有分子打分。
 
 from __future__ import annotations
@@ -26,16 +29,22 @@ from drugpipe.utils.chem import (
 logger = logging.getLogger(__name__)
 
 
+# EN: VirtualScreener core behavior and intent.
+# 中文：VirtualScreener 的核心行为与设计意图。
 class VirtualScreener:
     """Score all molecules with the trained pIC50 model and compute properties."""
     # 用训练好的 pIC50 模型对所有分子打分并计算性质。
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any], out_dir: Path, fp_cache_dir: Optional[Path] = None):
         self.out_dir = out_dir
         self.scored_csv = out_dir / "scored_candidates.csv"
         self.featurizer = MorganFeaturizer(cfg, cache_dir=fp_cache_dir)
 
     # ------------------------------------------------------------------
+    # EN: run core behavior and intent.
+    # 中文：run 的核心行为与设计意图。
     def run(
         self,
         df_mol: pd.DataFrame,
@@ -83,6 +92,8 @@ class VirtualScreener:
 
     # ------------------------------------------------------------------
     @staticmethod
+    # EN: _add_properties core behavior and intent.
+    # 中文：_add_properties 的核心行为与设计意图。
     def _add_properties(df: pd.DataFrame) -> None:
         smiles_list = df["canonical_smiles"].tolist()
         n_workers = min(os.cpu_count() or 1, 16)
@@ -113,6 +124,8 @@ class VirtualScreener:
             df[k] = v
 
 
+# EN: _compute_props_single core behavior and intent.
+# 中文：_compute_props_single 的核心行为与设计意图。
 def _compute_props_single(smi: str) -> Tuple[float, bool, Dict[str, Any]]:
     """Compute QED, structural alerts, and descriptors for one SMILES.
 

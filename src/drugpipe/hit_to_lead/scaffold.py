@@ -1,4 +1,7 @@
 """Murcko scaffold extraction and structure-activity relationship (SAR) analysis."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # Murcko 骨架提取与构效关系（SAR）分析。
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ from drugpipe.utils.chem import safe_mol
 logger = logging.getLogger(__name__)
 
 
+# EN: ScaffoldAnalyzer core behavior and intent.
+# 中文：ScaffoldAnalyzer 的核心行为与设计意图。
 class ScaffoldAnalyzer:
     """
     Extract Murcko scaffolds, group hits by scaffold, and produce a
@@ -27,11 +32,15 @@ class ScaffoldAnalyzer:
     """
     # 提取 Murcko 骨架，按骨架分组 hit，并生成每骨架 SAR 汇总。
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         h2l = cfg.get("hit_to_lead", {})
         self.min_cluster = int(h2l.get("scaffold", {}).get("min_cluster_size", 3))
 
     # ------------------------------------------------------------------
+    # EN: analyze core behavior and intent.
+    # 中文：analyze 的核心行为与设计意图。
     def analyze(self, df_hits: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Parameters
@@ -77,6 +86,8 @@ class ScaffoldAnalyzer:
         return df, summary
 
     # ------------------------------------------------------------------
+    # EN: _summarize core behavior and intent.
+    # 中文：_summarize 的核心行为与设计意图。
     def _summarize(self, df: pd.DataFrame) -> pd.DataFrame:
         groups = df.groupby("generic_scaffold_smi")
         rows = []

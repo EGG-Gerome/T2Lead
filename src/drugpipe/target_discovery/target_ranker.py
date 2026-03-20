@@ -1,4 +1,7 @@
 """Combine and rank targets from OpenTargets + OriGene, output ChEMBL IDs."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 合并并排序 OpenTargets 与 OriGene 的靶点，输出 ChEMBL ID。
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ from drugpipe.target_discovery.origene_client import OriGeneClient
 logger = logging.getLogger(__name__)
 
 
+# EN: TargetRanker core behavior and intent.
+# 中文：TargetRanker 的核心行为与设计意图。
 class TargetRanker:
     """
     Orchestrate Stage 1: merge data-driven (OpenTargets) and AI-driven
@@ -21,6 +26,8 @@ class TargetRanker:
     """
     # 编排阶段一：合并数据驱动（OpenTargets）与 AI 驱动（OriGene）靶点列表，排序并输出 top-N ChEMBL 靶点 ID。
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         self.cfg = cfg
         td_cfg = cfg.get("target_discovery", {})
@@ -30,6 +37,8 @@ class TargetRanker:
         self.use_opentargets = td_cfg.get("opentargets", {}).get("enabled", True)
 
     # ------------------------------------------------------------------
+    # EN: run core behavior and intent.
+    # 中文：run 的核心行为与设计意图。
     def run(self) -> List[Dict[str, Any]]:
         """
         Execute target discovery and return ranked target list.

@@ -1,4 +1,7 @@
 """ML / DL models for pIC50 regression: RandomForest + optional Torch MLP."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # pIC50 回归的 ML/DL 模型：随机森林 + 可选 Torch MLP。
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ except ImportError:
 # ======================================================================
 
 if _TORCH_OK:
+    # EN: _MLPRegressor core behavior and intent.
+    # 中文：_MLPRegressor 的核心行为与设计意图。
     class _MLPRegressor(nn.Module):
         def __init__(self, in_dim: int):
             super().__init__()
@@ -58,10 +63,14 @@ if _TORCH_OK:
 # 统一训练器
 # ======================================================================
 
+# EN: ModelTrainer core behavior and intent.
+# 中文：ModelTrainer 的核心行为与设计意图。
 class ModelTrainer:
     """Train RF (always) + Torch MLP (if available), expose predict/evaluate."""
     # 训练 RF（必选）+ Torch MLP（可选），提供 predict/evaluate 接口。
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         mcfg = cfg.get("target_to_hit", {}).get("model", {})
         self.seed = int(cfg.get("pipeline", {}).get("seed", 42))
@@ -86,6 +95,8 @@ class ModelTrainer:
         self._cache_dir: Optional[Path] = None
 
     # ------------------------------------------------------------------
+    # EN: train core behavior and intent.
+    # 中文：train 的核心行为与设计意图。
     def train(
         self, X: np.ndarray, y: np.ndarray, cache_dir: Optional[Path] = None,
     ) -> Dict[str, float]:
@@ -145,12 +156,16 @@ class ModelTrainer:
     # ------------------------------------------------------------------
     # Model persistence
     # ------------------------------------------------------------------
+    # EN: _data_hash core behavior and intent.
+    # 中文：_data_hash 的核心行为与设计意图。
     def _data_hash(self, X: np.ndarray, y: np.ndarray) -> str:
         h = hashlib.sha256()
         h.update(f"n={len(y)},d={X.shape[1]},seed={self.seed}".encode())
         h.update(y[:64].tobytes())
         return h.hexdigest()[:12]
 
+    # EN: _save core behavior and intent.
+    # 中文：_save 的核心行为与设计意图。
     def _save(self, X: np.ndarray, y: np.ndarray, metrics: Dict[str, float]) -> None:
         d = self._cache_dir
         d.mkdir(parents=True, exist_ok=True)
@@ -163,6 +178,8 @@ class ModelTrainer:
             joblib.dump(X.shape[1], d / f"mlp_dim_{tag}.joblib")
         logger.info("Saved model cache: %s (tag=%s)", d, tag)
 
+    # EN: _try_load core behavior and intent.
+    # 中文：_try_load 的核心行为与设计意图。
     def _try_load(self, X: np.ndarray, y: np.ndarray) -> Optional[Dict[str, float]]:
         d = self._cache_dir
         if d is None or not d.exists():
@@ -188,6 +205,8 @@ class ModelTrainer:
         return metrics
 
     # ------------------------------------------------------------------
+    # EN: _cross_validate core behavior and intent.
+    # 中文：_cross_validate 的核心行为与设计意图。
     def _cross_validate(
         self, X: np.ndarray, y: np.ndarray, n_folds: int = 5,
     ) -> Dict[str, float]:
@@ -232,6 +251,8 @@ class ModelTrainer:
         }
 
     # ------------------------------------------------------------------
+    # EN: predict core behavior and intent.
+    # 中文：predict 的核心行为与设计意图。
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Ensemble prediction: average of RF and MLP (if available)."""
         # 集成预测：RF 与 MLP（若有）的平均。
@@ -241,9 +262,13 @@ class ModelTrainer:
             return (pred_rf + pred_mlp) / 2.0
         return pred_rf
 
+    # EN: predict_rf core behavior and intent.
+    # 中文：predict_rf 的核心行为与设计意图。
     def predict_rf(self, X: np.ndarray) -> np.ndarray:
         return self.rf.predict(X)
 
+    # EN: predict_mlp core behavior and intent.
+    # 中文：predict_mlp 的核心行为与设计意图。
     def predict_mlp(self, X: np.ndarray) -> Optional[np.ndarray]:
         if self.mlp is None:
             return None
@@ -252,6 +277,8 @@ class ModelTrainer:
     # ------------------------------------------------------------------
     # Internal MLP helpers / 内部 MLP 辅助
     # ------------------------------------------------------------------
+    # EN: _train_mlp core behavior and intent.
+    # 中文：_train_mlp 的核心行为与设计意图。
     def _train_mlp(
         self, X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.ndarray,
     ) -> Tuple[Any, float]:
@@ -285,10 +312,14 @@ class ModelTrainer:
         pred = self._predict_torch(model, device, X_te)
         return model, _rmse(y_te, pred)
 
+    # EN: _predict_mlp core behavior and intent.
+    # 中文：_predict_mlp 的核心行为与设计意图。
     def _predict_mlp(self, X: np.ndarray) -> np.ndarray:
         return self._predict_torch(self.mlp, self._device, X)
 
     @staticmethod
+    # EN: _predict_torch core behavior and intent.
+    # 中文：_predict_torch 的核心行为与设计意图。
     def _predict_torch(model: Any, device: Any, X: np.ndarray, batch_size: int = 4096) -> np.ndarray:
         model.eval()
         preds = []
@@ -299,6 +330,8 @@ class ModelTrainer:
         return np.concatenate(preds)
 
 
+# EN: _resolve_torch_device core behavior and intent.
+# 中文：_resolve_torch_device 的核心行为与设计意图。
 def _resolve_torch_device(device_cfg: str) -> "torch.device":
     """Resolve config device string to a torch.device.
 
@@ -322,5 +355,7 @@ def _resolve_torch_device(device_cfg: str) -> "torch.device":
     return torch.device("cpu")
 
 
+# EN: _rmse core behavior and intent.
+# 中文：_rmse 的核心行为与设计意图。
 def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))

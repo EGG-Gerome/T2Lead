@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Run a single pipeline stage independently."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 独立运行流水线某一阶段。
 
 import argparse
@@ -19,6 +22,8 @@ from drugpipe.config import load_config
 from drugpipe.pipeline import run_hit_to_lead, run_target_discovery, run_target_to_hit
 
 
+# EN: main core behavior and intent.
+# 中文：main 的核心行为与设计意图。
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a single DrugPipe stage.")
     parser.add_argument(

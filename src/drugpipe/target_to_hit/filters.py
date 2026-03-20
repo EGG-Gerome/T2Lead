@@ -1,4 +1,7 @@
 """ADMET / drug-likeness rule filters and final candidate selection."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # ADMET / 类药性规则过滤与最终候选筛选。
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+# EN: ADMETFilter core behavior and intent.
+# 中文：ADMETFilter 的核心行为与设计意图。
 class ADMETFilter:
     """
     Apply Lipinski-like rules, QED threshold, structural-alert exclusion,
@@ -19,6 +24,8 @@ class ADMETFilter:
     """
     # 应用类 Lipinski 规则、QED 阈值、结构警示排除与预测效力 cutoff 筛选 hit 候选。
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any], out_dir: Path):
         flt = cfg.get("target_to_hit", {}).get("filter", {})
         self.pred_pic50_min = float(flt.get("pred_pIC50_min", 6.0))
@@ -41,6 +48,8 @@ class ADMETFilter:
         self.final_csv = out_dir / "final_hit_candidates.csv"
 
     # ------------------------------------------------------------------
+    # EN: run core behavior and intent.
+    # 中文：run 的核心行为与设计意图。
     def run(self, df_scored: pd.DataFrame) -> pd.DataFrame:
         """Apply all filters and return top-N hit candidates."""
         # 应用全部过滤条件并返回 top-N hit 候选。
@@ -76,6 +85,8 @@ class ADMETFilter:
         return df
 
     # ------------------------------------------------------------------
+    # EN: _rules_mask core behavior and intent.
+    # 中文：_rules_mask 的核心行为与设计意图。
     def _rules_mask(self, df: pd.DataFrame) -> pd.Series:
         r = self.rules
         return (

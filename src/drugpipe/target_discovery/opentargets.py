@@ -1,4 +1,7 @@
 """Query the OpenTargets Platform GraphQL API for disease-target associations."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 查询 OpenTargets Platform GraphQL API 获取疾病-靶点关联。
 
 from __future__ import annotations
@@ -65,10 +68,14 @@ query TargetChembl($ensemblId: String!) {
 """
 
 
+# EN: OpenTargetsClient core behavior and intent.
+# 中文：OpenTargetsClient 的核心行为与设计意图。
 class OpenTargetsClient:
     """Lightweight wrapper for OpenTargets Platform v4 GraphQL API."""
     # OpenTargets Platform v4 GraphQL API 的轻量封装。
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         ot_cfg = cfg.get("target_discovery", {}).get("opentargets", {})
         self.api_url = ot_cfg.get("api_url", "https://api.platform.opentargets.org/api/v4/graphql")
@@ -76,6 +83,8 @@ class OpenTargetsClient:
         self.http = HTTPClient(timeout=30, retries=4)
 
     # ------------------------------------------------------------------
+    # EN: search_disease core behavior and intent.
+    # 中文：search_disease 的核心行为与设计意图。
     def search_disease(self, keyword: str, size: int = 10) -> List[Dict[str, Any]]:
         """Free-text search for disease entities, returning list of ``{id, name}``."""
         # 疾病实体自由文本搜索，返回 {id, name} 列表。
@@ -88,6 +97,8 @@ class OpenTargetsClient:
         return [{"id": h["id"], "name": h["name"]} for h in hits if h.get("entity") == "disease"]
 
     # ------------------------------------------------------------------
+    # EN: get_associated_targets core behavior and intent.
+    # 中文：get_associated_targets 的核心行为与设计意图。
     def get_associated_targets(
         self,
         disease_id: str,
@@ -128,6 +139,8 @@ class OpenTargetsClient:
         return results
 
     # ------------------------------------------------------------------
+    # EN: ensembl_to_chembl core behavior and intent.
+    # 中文：ensembl_to_chembl 的核心行为与设计意图。
     def ensembl_to_chembl(self, ensembl_id: str) -> List[str]:
         """Map an Ensembl gene ID to ChEMBL target IDs."""
         # 将 Ensembl 基因 ID 映射为 ChEMBL 靶点 ID 列表。
@@ -158,6 +171,8 @@ class OpenTargetsClient:
         return list(dict.fromkeys(chembl_ids))
 
     # ------------------------------------------------------------------
+    # EN: discover core behavior and intent.
+    # 中文：discover 的核心行为与设计意图。
     def discover(self, disease_query: str, top_n: int = 5) -> List[Dict[str, Any]]:
         """
         High-level helper: disease name → ranked targets with ChEMBL IDs.

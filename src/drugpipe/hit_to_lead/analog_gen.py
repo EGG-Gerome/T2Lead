@@ -1,4 +1,7 @@
 """Analog generation using CReM (chemical space exploration via fragment mutation)."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 使用 CReM（通过片段突变的化学空间探索）生成类似物。
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ except ImportError:
     _CREM_OK = False
 
 
+# EN: AnalogGenerator core behavior and intent.
+# 中文：AnalogGenerator 的核心行为与设计意图。
 class AnalogGenerator:
     """
     Generate molecular analogs for each hit compound using CReM
@@ -30,6 +35,8 @@ class AnalogGenerator:
     """
     # 用 CReM 为每个 hit 生成分子类似物；无 CReM 或片段库时跳过，仅保留原 hit。
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any]):
         h2l = cfg.get("hit_to_lead", {})
         ag = h2l.get("analog_gen", {})
@@ -41,6 +48,8 @@ class AnalogGenerator:
         self.max_size = int(ag.get("crem_max_size", 10))
 
     # ------------------------------------------------------------------
+    # EN: generate core behavior and intent.
+    # 中文：generate 的核心行为与设计意图。
     def generate(self, df_hits: pd.DataFrame) -> pd.DataFrame:
         """
         For each hit, attempt to generate structural analogs.
@@ -100,6 +109,8 @@ class AnalogGenerator:
         return df
 
     # ------------------------------------------------------------------
+    # EN: _mutate core behavior and intent.
+    # 中文：_mutate 的核心行为与设计意图。
     def _mutate(self, smiles: str) -> List[str]:
         mol = safe_mol(smiles)
         if mol is None:

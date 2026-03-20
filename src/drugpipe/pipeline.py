@@ -1,4 +1,7 @@
 """Four-stage pipeline orchestrator: Target Discovery → T2H → H2L → Lead Optimization."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 四阶段流水线编排器：靶点发现 → 靶点到苗头 → 苗头到先导 → 先导优化。
 
 from __future__ import annotations
@@ -21,8 +24,12 @@ RDLogger.DisableLog("rdApp.warning")
 logger = logging.getLogger(__name__)
 
 
+# EN: _set_seed core behavior and intent.
+# 中文：_set_seed 的核心行为与设计意图。
 def _set_seed(seed: int) -> None:
-    """Set global and numpy/torch RNG seed. / 设置全局及 numpy/torch 随机种子。"""
+    """EN: Set deterministic seeds for Python, NumPy and Torch.
+    中文：为 Python、NumPy 和 Torch 设置可复现随机种子。
+    """
     random.seed(seed)
     np.random.seed(seed)
     try:
@@ -38,15 +45,19 @@ def _set_seed(seed: int) -> None:
 # 靶点可用性检查
 # ======================================================================
 
+# EN: _pick_viable_target core behavior and intent.
+# 中文：_pick_viable_target 的核心行为与设计意图。
 def _pick_viable_target(
     cfg: Dict[str, Any],
     targets: List[Dict[str, Any]],
     out_dir: Path,
 ) -> str:
-    """Pick the first target from *targets* that has enough IC50 records.
+    """EN: Pick the first target with enough IC50 training records.
+    中文：选择第一个满足 IC50 样本量阈值的候选靶点。
 
-    Falls back to the top-ranked target if activity data is not yet available
-    (i.e. first run before crawl).
+    EN: If activity data has not been crawled yet, fall back to the top-ranked
+    target so the first run can proceed.
+    中文：若活性数据尚未抓取（首次运行），则回退到排序第一的靶点以继续流程。
     """
     act_csv = out_dir / "activities_ic50.csv"
     min_samples = int(
@@ -86,9 +97,12 @@ def _pick_viable_target(
 # 各阶段执行函数
 # ======================================================================
 
+# EN: run_target_discovery core behavior and intent.
+# 中文：run_target_discovery 的核心行为与设计意图。
 def run_target_discovery(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Stage 1: identify therapeutic targets for a disease."""
-    # 阶段一：识别疾病的治疗靶点。
+    """EN: Stage 1 - identify disease-relevant therapeutic targets.
+    中文：阶段 1：识别与疾病相关的治疗靶点。
+    """
     from drugpipe.target_discovery.target_ranker import TargetRanker
 
     ranker = TargetRanker(cfg)
@@ -97,22 +111,24 @@ def run_target_discovery(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return targets
 
 
+# EN: run_target_to_hit core behavior and intent.
+# 中文：run_target_to_hit 的核心行为与设计意图。
 def run_target_to_hit(
     cfg: Dict[str, Any],
     target_chembl_id: Optional[str] = None,
     crawl_out_dir: Optional[Path] = None,
 ) -> pd.DataFrame:
-    """Stage 2: data acquisition → ML training → virtual screening → ADMET filter.
+    """EN: Stage 2 - data acquisition, model training, screening and filtering.
+    中文：阶段 2：数据获取、模型训练、虚拟筛选与 ADMET 过滤。
 
-    Supports three modes:
-      1. **ChEMBL mode** (default): crawl ChEMBL for molecules + IC50 activities.
-      2. **External data mode**: user supplies their own IC50 CSV
-         (``target_to_hit.external_activities_csv``).  Useful for targets with
-         data in BindingDB / literature but not in ChEMBL.
-      3. **Docking-only mode**: skip ML entirely, select candidates by
-         drug-likeness only, let Stage 4 docking do the scoring
-         (``target_to_hit.docking_only: true``).  Useful for truly novel
-         targets with zero IC50 data anywhere.
+    EN: Supported modes:
+      1) ChEMBL mode (default): crawl molecules and IC50 activities from ChEMBL.
+      2) External data mode: use user IC50 CSV via `target_to_hit.external_activities_csv`.
+      3) Docking-only mode: skip ML and pass drug-like candidates to Stage 4 docking.
+    中文：支持三种模式：
+      1）ChEMBL 模式（默认）：抓取分子与 IC50 活性数据；
+      2）外部数据模式：通过 `target_to_hit.external_activities_csv` 使用用户数据；
+      3）仅对接模式：跳过 ML，按成药性筛选后交给阶段 4 对接评分。
     """
     from drugpipe.target_to_hit.chembl_api import ChEMBLCrawler
     from drugpipe.target_to_hit.dataset import DatasetBuilder
@@ -191,14 +207,17 @@ def run_target_to_hit(
     return df_hits
 
 
+# EN: run_hit_to_lead core behavior and intent.
+# 中文：run_hit_to_lead 的核心行为与设计意图。
 def run_hit_to_lead(
     cfg: Dict[str, Any],
     df_hits: pd.DataFrame,
     model_predict_fn=None,
     featurizer_fn=None,
 ) -> pd.DataFrame:
-    """Stage 3: scaffold analysis → clustering → analog gen → MPO → leads."""
-    # 阶段三：骨架分析 → 聚类 → 类似物生成 → MPO → 先导输出。
+    """EN: Stage 3 - scaffold analysis, clustering, analog generation and MPO ranking.
+    中文：阶段 3：骨架分析、聚类、类似物生成与 MPO 排序，输出先导分子。
+    """
     from drugpipe.hit_to_lead.lead_ranker import LeadRanker
     from drugpipe.hit_to_lead.reinvent_bridge import Reinvent4Bridge
 
@@ -220,12 +239,15 @@ def run_hit_to_lead(
     return df_leads
 
 
+# EN: run_lead_optimization core behavior and intent.
+# 中文：run_lead_optimization 的核心行为与设计意图。
 def run_lead_optimization(
     cfg: Dict[str, Any],
     df_leads: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Stage 4: protein prep → docking → enhanced ADMET → MD → ranking."""
-    # 阶段四：蛋白准备 → 对接 → 增强 ADMET → MD 模拟 → 综合排序。
+    """EN: Stage 4 - protein prep, docking, ADMET, MD and final ranking.
+    中文：阶段 4：蛋白准备、对接、ADMET、MD 评估与最终排序。
+    """
     from drugpipe.lead_optimization.lead_optimizer import LeadOptimizer
 
     out_dir = get_out_dir(cfg)
@@ -241,8 +263,12 @@ def run_lead_optimization(
 # 完整流水线
 # ======================================================================
 
+# EN: _disease_slug core behavior and intent.
+# 中文：_disease_slug 的核心行为与设计意图。
 def _disease_slug(disease: str) -> str:
-    """Sanitize disease name into a filesystem-safe directory name."""
+    """EN: Convert disease text into a filesystem-safe slug.
+    中文：将疾病名称转换为文件系统安全的目录名。
+    """
     import re
     slug = disease.strip().lower()
     slug = re.sub(r"[^\w\s-]", "", slug)
@@ -250,9 +276,12 @@ def _disease_slug(disease: str) -> str:
     return slug or "default"
 
 
+# EN: run_pipeline core behavior and intent.
+# 中文：run_pipeline 的核心行为与设计意图。
 def run_pipeline(cfg: Dict[str, Any]) -> None:
-    """Execute the stages listed in ``pipeline.stages``."""
-    # 执行配置中 pipeline.stages 所列阶段。
+    """EN: Execute stages listed in `pipeline.stages` with shared state handoff.
+    中文：按 `pipeline.stages` 顺序执行各阶段，并在阶段间传递中间结果。
+    """
     stages = cfg.get("pipeline", {}).get("stages", [])
     seed = int(cfg.get("pipeline", {}).get("seed", 42))
     _set_seed(seed)
@@ -353,8 +382,12 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
     logger.info("=" * 60)
 
 
+# EN: _override_out_dir core behavior and intent.
+# 中文：_override_out_dir 的核心行为与设计意图。
 def _override_out_dir(cfg: Dict[str, Any], out_dir: Path) -> Dict[str, Any]:
-    """Return a shallow config copy with pipeline.out_dir overridden."""
+    """EN: Return a deep-copied config with `pipeline.out_dir` overridden.
+    中文：返回深拷贝后的配置，并覆写 `pipeline.out_dir`。
+    """
     import copy
     cfg2 = copy.deepcopy(cfg)
     cfg2.setdefault("pipeline", {})["out_dir"] = str(out_dir)
@@ -366,9 +399,12 @@ def _override_out_dir(cfg: Dict[str, Any], out_dir: Path) -> Dict[str, Any]:
 # 命令行入口
 # ======================================================================
 
+# EN: main core behavior and intent.
+# 中文：main 的核心行为与设计意图。
 def main() -> None:
-    """Entry point for ``drugpipe`` console script."""
-    # drugpipe 控制台脚本入口。
+    """EN: CLI entry point that parses args, builds config, and runs pipeline.
+    中文：命令行入口：解析参数、构建配置并启动流水线。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -458,13 +494,20 @@ def main() -> None:
 # File logging
 # ======================================================================
 
+# EN: _setup_file_logging core behavior and intent.
+# 中文：_setup_file_logging 的核心行为与设计意图。
 def _setup_file_logging(
     cfg: Dict[str, Any], level: int, fmt: str,
 ) -> None:
-    """Create log files: a full debug log and a concise summary log.
+    """EN: Attach file handlers for detailed and summary logs.
+    中文：为详细日志与摘要日志绑定文件处理器。
 
-    Log directory: ``<out_dir>/logs/``
-    Naming: ``<date>_<disease>_<target>_full.log`` / ``..._summary.log``
+    EN: Output files:
+      - `<out_dir>/logs/<timestamp>_..._full.log`
+      - `<out_dir>/logs/<timestamp>_..._summary.log`
+    中文：输出文件：
+      - `<out_dir>/logs/<时间戳>_..._full.log`
+      - `<out_dir>/logs/<时间戳>_..._summary.log`
     """
     import datetime
 
@@ -496,6 +539,8 @@ def _setup_file_logging(
     sh.setLevel(logging.WARNING)
     sh.setFormatter(logging.Formatter(fmt))
 
+    # EN: _InfoKeywordFilter core behavior and intent.
+    # 中文：_InfoKeywordFilter 的核心行为与设计意图。
     class _InfoKeywordFilter(logging.Filter):
         _KEYWORDS = (
             "Stage", "complete", "Selected target", "PIPELINE",

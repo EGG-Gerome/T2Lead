@@ -3,6 +3,9 @@
 Coordinates all lead-optimization substeps and produces
 ``optimized_leads.csv`` with composite scores.
 """
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 阶段四编排器：蛋白准备 → 对接 → ADMET → MD → 综合排序 → optimized_leads.csv。
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ from drugpipe.lead_optimization.protein_prep import ProteinPreparator
 logger = logging.getLogger(__name__)
 
 
+# EN: LeadOptimizer core behavior and intent.
+# 中文：LeadOptimizer 的核心行为与设计意图。
 class LeadOptimizer:
     """Orchestrate the full Lead Optimization stage.
 
@@ -34,6 +39,8 @@ class LeadOptimizer:
     5. Composite scoring & ranking
     """
 
+    # EN: __init__ core behavior and intent.
+    # 中文：__init__ 的核心行为与设计意图。
     def __init__(self, cfg: Dict[str, Any], out_dir: Path):
         self.cfg = cfg
         self.out_dir = out_dir
@@ -55,6 +62,8 @@ class LeadOptimizer:
         self.output_csv = out_dir / "optimized_leads.csv"
 
     # ------------------------------------------------------------------
+    # EN: run core behavior and intent.
+    # 中文：run 的核心行为与设计意图。
     def run(self, df_leads: pd.DataFrame) -> pd.DataFrame:
         """Execute the full lead-optimization pipeline."""
         if not self.enabled:
@@ -95,6 +104,8 @@ class LeadOptimizer:
         return df_out
 
     # ------------------------------------------------------------------
+    # EN: _composite_score core behavior and intent.
+    # 中文：_composite_score 的核心行为与设计意图。
     def _composite_score(self, df: pd.DataFrame) -> pd.DataFrame:
         """Compute a weighted composite optimization score.
 
@@ -143,6 +154,8 @@ class LeadOptimizer:
         return df
 
     @staticmethod
+    # EN: _normalise_lower_better core behavior and intent.
+    # 中文：_normalise_lower_better 的核心行为与设计意图。
     def _normalise_lower_better(s: Optional[pd.Series]) -> pd.Series:
         """Min-max normalise where *lower* raw values → *higher* normalised
         scores (closer to 1.0)."""
@@ -155,6 +168,8 @@ class LeadOptimizer:
         return 1.0 - (filled - mn) / (mx - mn)
 
     # ------------------------------------------------------------------
+    # EN: _rank_and_output core behavior and intent.
+    # 中文：_rank_and_output 的核心行为与设计意图。
     def _rank_and_output(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sort by composite score, keep top-N, write CSV."""
         df = df.sort_values("opt_score", ascending=False)

@@ -1,4 +1,7 @@
 """RDKit chemistry utilities shared across pipeline stages."""
+# EN: Module overview and key intent for maintainers.
+# 中文：模块总览与关键设计意图，便于后续维护。
+
 # 各流水线阶段共用的 RDKit 化学工具。
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ from rdkit.Chem import rdFingerprintGenerator
 # 单例结构警示目录（PAINS + Brenk）
 # ---------------------------------------------------------------------------
 
+# EN: _build_filter_catalog core behavior and intent.
+# 中文：_build_filter_catalog 的核心行为与设计意图。
 def _build_filter_catalog() -> FilterCatalog:
     params = FilterCatalogParams()
     params.AddCatalog(FilterCatalogParams.FilterCatalogs.PAINS_A)
@@ -32,6 +37,8 @@ def _build_filter_catalog() -> FilterCatalog:
 _FILTER_CATALOG: Optional[FilterCatalog] = None
 
 
+# EN: get_filter_catalog core behavior and intent.
+# 中文：get_filter_catalog 的核心行为与设计意图。
 def get_filter_catalog() -> FilterCatalog:
     """Return the shared PAINS/Brenk filter catalog. / 返回共用的 PAINS/Brenk 过滤目录。"""
     global _FILTER_CATALOG
@@ -45,6 +52,8 @@ def get_filter_catalog() -> FilterCatalog:
 # SMILES 转 Mol 对象
 # ---------------------------------------------------------------------------
 
+# EN: safe_mol core behavior and intent.
+# 中文：safe_mol 的核心行为与设计意图。
 def safe_mol(smiles: str) -> Optional[Chem.Mol]:
     """Parse SMILES, returning *None* on any failure."""
     # 解析 SMILES，失败时返回 None。
@@ -64,6 +73,8 @@ def safe_mol(smiles: str) -> Optional[Chem.Mol]:
 _FP_GENERATORS: Dict[tuple, Any] = {}
 
 
+# EN: _get_morgan_gen core behavior and intent.
+# 中文：_get_morgan_gen 的核心行为与设计意图。
 def _get_morgan_gen(radius: int, nbits: int) -> Any:
     key = (radius, nbits)
     if key not in _FP_GENERATORS:
@@ -73,6 +84,8 @@ def _get_morgan_gen(radius: int, nbits: int) -> Any:
     return _FP_GENERATORS[key]
 
 
+# EN: morgan_fp_bits core behavior and intent.
+# 中文：morgan_fp_bits 的核心行为与设计意图。
 def morgan_fp_bits(mol: Chem.Mol, radius: int = 2, nbits: int = 2048) -> np.ndarray:
     """Morgan (ECFP) bit vector. / Morgan（ECFP）位向量。"""
     gen = _get_morgan_gen(radius, nbits)
@@ -80,6 +93,8 @@ def morgan_fp_bits(mol: Chem.Mol, radius: int = 2, nbits: int = 2048) -> np.ndar
     return fp.astype(np.uint8)
 
 
+# EN: smiles_to_fp core behavior and intent.
+# 中文：smiles_to_fp 的核心行为与设计意图。
 def smiles_to_fp(smiles: str, radius: int = 2, nbits: int = 2048) -> Optional[np.ndarray]:
     mol = safe_mol(smiles)
     if mol is None:
@@ -87,6 +102,8 @@ def smiles_to_fp(smiles: str, radius: int = 2, nbits: int = 2048) -> Optional[np
     return morgan_fp_bits(mol, radius, nbits)
 
 
+# EN: batch_fps core behavior and intent.
+# 中文：batch_fps 的核心行为与设计意图。
 def batch_fps(smiles_list: list[str], radius: int = 2, nbits: int = 2048) -> np.ndarray:
     """Return (N, nbits) float32 fingerprint matrix."""
     # 返回 (N, nbits) 的 float32 指纹矩阵。
@@ -103,6 +120,8 @@ def batch_fps(smiles_list: list[str], radius: int = 2, nbits: int = 2048) -> np.
 # IC50 与 pIC50 互算
 # ---------------------------------------------------------------------------
 
+# EN: ic50_to_pic50 core behavior and intent.
+# 中文：ic50_to_pic50 的核心行为与设计意图。
 def ic50_to_pic50(ic50_nM: float) -> Optional[float]:
     """pIC50 = 9 − log10(IC50 in nM)."""
     # pIC50 = 9 − log10(IC50 [nM])。
@@ -115,6 +134,8 @@ def ic50_to_pic50(ic50_nM: float) -> Optional[float]:
         return None
 
 
+# EN: pic50_to_ic50 core behavior and intent.
+# 中文：pic50_to_ic50 的核心行为与设计意图。
 def pic50_to_ic50(pic50: float) -> float:
     """IC50 (nM) = 10^(9 − pIC50)."""
     # IC50 (nM) = 10^(9 − pIC50)。
@@ -126,6 +147,8 @@ def pic50_to_ic50(pic50: float) -> float:
 # 分子描述符
 # ---------------------------------------------------------------------------
 
+# EN: calc_descriptors core behavior and intent.
+# 中文：calc_descriptors 的核心行为与设计意图。
 def calc_descriptors(mol: Chem.Mol) -> Dict[str, Any]:
     """Compute MW, cLogP, TPSA, HBD, HBA, RotB, Rings, HeavyAtoms."""
     # 计算分子量、cLogP、TPSA、氢键供体/受体、可旋转键、环数、重原子数。
@@ -141,11 +164,15 @@ def calc_descriptors(mol: Chem.Mol) -> Dict[str, Any]:
     }
 
 
+# EN: calc_qed core behavior and intent.
+# 中文：calc_qed 的核心行为与设计意图。
 def calc_qed(mol: Chem.Mol) -> float:
     """Quantitative Estimate of Drug-likeness. / 药物相似性定量估计（QED）。"""
     return float(qed(mol))
 
 
+# EN: has_structural_alert core behavior and intent.
+# 中文：has_structural_alert 的核心行为与设计意图。
 def has_structural_alert(mol: Chem.Mol) -> bool:
     """Return True if the molecule matches any PAINS / Brenk alert."""
     # 若分子命中任一 PAINS/Brenk 警示则返回 True。
