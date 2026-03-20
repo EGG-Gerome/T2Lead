@@ -10,8 +10,8 @@ Requirements:
   - A prior model file (e.g. ``pubchem_ecfp4_…_reinvent4_dict_voc.prior``)
   - Paths set in ``configs/default_config.yaml`` → ``hit_to_lead.reinvent4``
 """
-# EN: Optional REINVENT4 integration for RL-based molecular optimization.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Optional REINVENT4 integration for RL-based molecular optimization.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 可选 REINVENT4 集成：基于强化学习的分子优化；生成配置、以子进程启动并收集输出 SMILES。
 

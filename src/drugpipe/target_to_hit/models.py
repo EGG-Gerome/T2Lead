@@ -1,6 +1,6 @@
 """ML / DL models for pIC50 regression: RandomForest + optional Torch MLP."""
-# EN: ML / DL models for pIC50 regression: RandomForest + optional Torch MLP.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# ML / DL models for pIC50 regression: RandomForest + optional Torch MLP.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # pIC50 回归的 ML/DL 模型：随机森林 + 可选 Torch MLP。
 

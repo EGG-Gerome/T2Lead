@@ -1,6 +1,6 @@
 """Query the OpenTargets Platform GraphQL API for disease-target associations."""
-# EN: Query the OpenTargets Platform GraphQL API for disease-target associations.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Query the OpenTargets Platform GraphQL API for disease-target associations.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 查询 OpenTargets Platform GraphQL API 获取疾病-靶点关联。
 

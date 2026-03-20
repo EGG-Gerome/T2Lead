@@ -10,8 +10,8 @@ Required dependencies:
 Optional:
   - mdtraj              (conda install -c conda-forge mdtraj)
 """
-# EN: Short molecular-dynamics simulation and MM-GBSA binding energy via OpenMM.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Short molecular-dynamics simulation and MM-GBSA binding energy via OpenMM.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 短时 MD 模拟与 MM-GBSA 结合自由能（OpenMM + GAFF2 小分子力场）。
 

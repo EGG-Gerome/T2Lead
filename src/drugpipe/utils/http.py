@@ -1,6 +1,6 @@
 """HTTP client with automatic retry, exponential back-off, and polite sleep."""
-# EN: HTTP client with automatic retry, exponential back-off, and polite sleep.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# HTTP client with automatic retry, exponential back-off, and polite sleep.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 带自动重试、指数退避与礼貌延时的 HTTP 客户端。
 

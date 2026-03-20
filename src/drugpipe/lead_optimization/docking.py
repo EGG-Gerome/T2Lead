@@ -8,8 +8,8 @@ Optional dependencies:
   - vina   (pip install vina)
   - meeko  (pip install meeko)
 """
-# EN: Molecular docking module using AutoDock Vina.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Molecular docking module using AutoDock Vina.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 分子对接模块（AutoDock Vina）：SMILES → 3D 构象 → 对接 → 打分，支持分子级并行。
 

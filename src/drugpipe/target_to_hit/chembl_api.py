@@ -1,6 +1,6 @@
 """ChEMBL REST API crawler with checkpoint-based resume and rate limiting."""
-# EN: ChEMBL REST API crawler with checkpoint-based resume and rate limiting.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# ChEMBL REST API crawler with checkpoint-based resume and rate limiting.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # ChEMBL REST API 爬虫，支持断点续跑与请求限速。
 

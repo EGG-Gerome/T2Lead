@@ -1,6 +1,6 @@
 """Analog generation using CReM (chemical space exploration via fragment mutation)."""
-# EN: Analog generation using CReM (chemical space exploration via fragment mutation).
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Analog generation using CReM (chemical space exploration via fragment mutation).
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 使用 CReM（通过片段突变的化学空间探索）生成类似物。
 

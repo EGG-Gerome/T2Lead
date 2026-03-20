@@ -1,6 +1,6 @@
 """Murcko scaffold extraction and structure-activity relationship (SAR) analysis."""
-# EN: Murcko scaffold extraction and structure-activity relationship (SAR) analysis.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Murcko scaffold extraction and structure-activity relationship (SAR) analysis.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # Murcko 骨架提取与构效关系（SAR）分析。
 

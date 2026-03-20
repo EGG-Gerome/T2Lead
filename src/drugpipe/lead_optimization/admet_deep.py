@@ -9,8 +9,8 @@ Computed properties:
   - Veber oral bioavailability rules    (RotBonds ≤ 10, TPSA ≤ 140)
   - Composite ADMET risk score          (0 = low risk … 1 = high risk)
 """
-# EN: Enhanced ADMET profiling beyond basic Lipinski / QED.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Enhanced ADMET profiling beyond basic Lipinski / QED.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 增强 ADMET 评估：合成可及性、hERG 毒性、CYP 抑制风险、Veber 规则、综合风险评分。
 

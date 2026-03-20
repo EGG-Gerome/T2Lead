@@ -1,6 +1,6 @@
 """Combine and rank targets from OpenTargets + OriGene, output ChEMBL IDs."""
-# EN: Combine and rank targets from OpenTargets + OriGene, output ChEMBL IDs.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Combine and rank targets from OpenTargets + OriGene, output ChEMBL IDs.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 合并并排序 OpenTargets 与 OriGene 的靶点，输出 ChEMBL ID。
 

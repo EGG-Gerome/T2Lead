@@ -1,6 +1,6 @@
 """RDKit chemistry utilities shared across pipeline stages."""
-# EN: RDKit chemistry utilities shared across pipeline stages.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# RDKit chemistry utilities shared across pipeline stages.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 各流水线阶段共用的 RDKit 化学工具。
 

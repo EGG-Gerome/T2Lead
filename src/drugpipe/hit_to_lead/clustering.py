@@ -1,6 +1,6 @@
 """Butina clustering for chemical diversity analysis of hit compounds."""
-# EN: Butina clustering for chemical diversity analysis of hit compounds.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Butina clustering for chemical diversity analysis of hit compounds.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # Butina 聚类，用于 hit 化合物的化学多样性分析。
 

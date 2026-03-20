@@ -1,6 +1,6 @@
 """Morgan fingerprint featurizer with on-disk caching."""
-# EN: Morgan fingerprint featurizer with on-disk caching.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Morgan fingerprint featurizer with on-disk caching.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # Morgan 指纹特征化器（支持磁盘缓存）。
 

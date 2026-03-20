@@ -1,6 +1,6 @@
 """ADMET / drug-likeness rule filters and final candidate selection."""
-# EN: ADMET / drug-likeness rule filters and final candidate selection.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# ADMET / drug-likeness rule filters and final candidate selection.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # ADMET / 类药性规则过滤与最终候选筛选。
 

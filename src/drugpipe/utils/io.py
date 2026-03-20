@@ -1,6 +1,6 @@
 """I/O helpers: CSV append, state persistence, directory management."""
-# EN: I/O helpers: CSV append, state persistence, directory management.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# I/O helpers: CSV append, state persistence, directory management.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 输入输出辅助：CSV 追加、状态持久化、目录管理。
 

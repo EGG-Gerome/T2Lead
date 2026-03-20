@@ -8,8 +8,8 @@ Optional dependencies:
   - pdbfixer  (conda install -c conda-forge pdbfixer)
   - meeko     (pip install meeko)
 """
-# EN: Protein structure retrieval and preparation for molecular docking / MD.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Protein structure retrieval and preparation for molecular docking / MD.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 蛋白结构获取与准备：从 RCSB 下载 PDB → PDBFixer 清洗 → 识别结合位点 → 转换为 PDBQT。
 

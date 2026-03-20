@@ -1,6 +1,6 @@
 """Build a training dataset for a specific target from crawled ChEMBL data."""
-# EN: Build a training dataset for a specific target from crawled ChEMBL data.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Build a training dataset for a specific target from crawled ChEMBL data.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 从爬取的 ChEMBL 数据为指定靶点构建训练数据集。
 

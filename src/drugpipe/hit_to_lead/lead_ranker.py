@@ -1,6 +1,6 @@
 """Final lead ranking: combine all candidates, filter, rank by MPO, and output."""
-# EN: Final lead ranking: combine all candidates, filter, rank by MPO, and output.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Final lead ranking: combine all candidates, filter, rank by MPO, and output.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 最终先导排序：合并所有候选、过滤、按 MPO 排序并输出。
 

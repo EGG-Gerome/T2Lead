@@ -1,6 +1,6 @@
 """Multi-Parameter Optimization (MPO) scoring for lead prioritization."""
-# EN: Multi-Parameter Optimization (MPO) scoring for lead prioritization.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Multi-Parameter Optimization (MPO) scoring for lead prioritization.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 多参数优化（MPO）打分，用于先导化合物排序。
 

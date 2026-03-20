@@ -3,8 +3,8 @@
 Coordinates all lead-optimization substeps and produces
 ``optimized_leads.csv`` with composite scores.
 """
-# EN: Stage 4 orchestrator: protein prep → docking → ADMET → MD → ranking.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Stage 4 orchestrator: protein prep → docking → ADMET → MD → ranking.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 阶段四编排器：蛋白准备 → 对接 → ADMET → MD → 综合排序 → optimized_leads.csv。
 

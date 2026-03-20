@@ -1,6 +1,6 @@
 """Virtual screening: score all molecules using trained models."""
-# EN: Virtual screening: score all molecules using trained models.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Virtual screening: score all molecules using trained models.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 虚拟筛选：用训练好的模型对所有分子打分。
 

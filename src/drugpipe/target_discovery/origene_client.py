@@ -7,8 +7,8 @@ interface to a running OriGene instance (which in turn relies on OrigeneMCP).
 If the user has not deployed OriGene, the rest of the pipeline still works —
 this stage is optional.
 """
-# EN: Wrapper for calling a locally deployed OriGene agent.
-# 中文：说明模块职责、上下游关系与维护注意事项。
+# Wrapper for calling a locally deployed OriGene agent.
+# 说明模块职责、上下游关系与维护注意事项。
 
 # 调用本地部署的 OriGene 代理的封装。OriGene 为多智能体虚拟疾病生物学家，本模块提供对其 HTTP 接口的薄封装；未部署时流水线其余阶段仍可运行。
 
