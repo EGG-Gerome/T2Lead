@@ -1,7 +1,8 @@
 .PHONY: install run run-docking clean help
 
 CONDA_ENV  := t2lead
-PYTHON     := conda run -n $(CONDA_ENV) python
+# Without --no-capture-output, conda run holds logs until exit (looks hung on long runs).
+PYTHON     := conda run --no-capture-output -n $(CONDA_ENV) python
 DISEASE    ?= breast cancer
 
 help:  ## Show this help
