@@ -54,28 +54,68 @@ except ImportError:
     _MDTRAJ_OK = False
 
 
+def _validate_platform(name: str, props: Dict[str, str]) -> bool:
+    """Actually run a tiny simulation to verify the platform works at kernel level."""
+    try:
+        platform = openmm.Platform.getPlatformByName(name)
+        system = openmm.System()
+        system.addParticle(1.0)
+        force = openmm.CustomExternalForce("x^2+y^2+z^2")
+        force.addParticle(0, [])
+        system.addForce(force)
+        integrator = openmm.LangevinMiddleIntegrator(
+            300 * unit.kelvin, 1 / unit.picosecond, 0.002 * unit.picoseconds,
+        )
+        ctx = openmm.Context(system, integrator, platform, props)
+        ctx.setPositions([[0, 0, 0]])
+        ctx.getState(getEnergy=True)
+        del ctx
+        return True
+    except Exception as exc:
+        logger.warning("OpenMM platform '%s' detected but unusable: %s", name, exc)
+        return False
+
+
 def _select_platform(device: str) -> Tuple[Optional[str], Dict[str, str]]:
-    """Choose OpenMM platform based on user config."""
+    """Choose OpenMM platform based on user config, with runtime validation.
+
+    Even when a GPU platform is registered, the actual CUDA/OpenCL kernels
+    may fail on newer architectures (e.g. Blackwell sm_120 with older PTX).
+    This function runs a micro-simulation to verify the platform before
+    committing to it, and falls back to CPU if the GPU path is broken.
+    """
     if not _OPENMM_OK:
         return None, {}
 
     device = device.lower().strip()
+
     if device == "cuda":
-        return "CUDA", {"Precision": "mixed"}
+        if _validate_platform("CUDA", {"Precision": "mixed"}):
+            return "CUDA", {"Precision": "mixed"}
+        logger.warning("CUDA requested but validation failed, falling back to CPU.")
+        return "CPU", {}
     if device in ("opencl", "mps"):
-        return "OpenCL", {"Precision": "mixed"}
+        if _validate_platform("OpenCL", {"Precision": "mixed"}):
+            return "OpenCL", {"Precision": "mixed"}
+        logger.warning("OpenCL requested but validation failed, falling back to CPU.")
+        return "CPU", {}
     if device == "cpu":
         return "CPU", {}
 
-    for name in ("CUDA", "OpenCL", "CPU"):
+    # auto: try GPU platforms first, validate, fall back to CPU
+    for name in ("CUDA", "OpenCL"):
+        props = {"Precision": "mixed"}
         try:
             openmm.Platform.getPlatformByName(name)
-            props = {"Precision": "mixed"} if name in ("CUDA", "OpenCL") else {}
-            logger.info("OpenMM auto-selected platform: %s", name)
-            return name, props
         except Exception:
             continue
-    return None, {}
+        if _validate_platform(name, props):
+            logger.info("OpenMM auto-selected platform: %s", name)
+            return name, props
+        logger.info("OpenMM platform %s registered but failed validation, skipping.", name)
+
+    logger.info("OpenMM falling back to CPU platform.")
+    return "CPU", {}
 
 
 def _smiles_to_3d_pdb(smiles: str) -> Optional[str]:

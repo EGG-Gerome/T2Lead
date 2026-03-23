@@ -1,0 +1,51 @@
+# Minimal REINVENT4 smoke test (CPU, few steps). Not for production.
+# Run (quiet logs): reinvent --log-level error -d cpu scripts/reinvent_smoke.toml
+# If prior shows INVALID HASH errors, run: python scripts/fix_reinvent_prior_metadata.py <prior.prior>
+run_type = "staged_learning"
+device = "cpu"
+
+[parameters]
+prior_file = "/root/REINVENT4/priors/reinvent.prior"
+agent_file = "/root/REINVENT4/priors/reinvent.prior"
+summary_csv_prefix = "/tmp/reinvent_smoke/reinvent4"
+batch_size = 8
+use_checkpoint = false
+unique_sequences = true
+randomize_smiles = true
+
+[learning_strategy]
+type = "dap"
+sigma = 128
+rate = 0.0001
+
+[diversity_filter]
+type = "IdenticalMurckoScaffold"
+bucket_size = 25
+minscore = 0.4
+minsimilarity = 0.4
+
+[[stage]]
+max_score = 1.0
+min_steps = 2
+max_steps = 4
+chkpt_file = "/tmp/reinvent_smoke/reinvent4_agent.ckpt"
+termination = "simple"
+
+[stage.scoring]
+type = "geometric_mean"
+
+[[stage.scoring.component]]
+[stage.scoring.component.QED]
+[[stage.scoring.component.QED.endpoint]]
+name = "QED"
+weight = 1.0
+
+[[stage.scoring.component]]
+[stage.scoring.component.TanimotoSimilarity]
+[[stage.scoring.component.TanimotoSimilarity.endpoint]]
+name = "Tanimoto"
+weight = 0.5
+params.smiles = ["c1ccccc1"]
+params.radius = 2
+params.use_counts = false
+params.use_features = false

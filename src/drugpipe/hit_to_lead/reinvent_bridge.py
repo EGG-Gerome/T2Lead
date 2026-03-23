@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -32,59 +34,68 @@ logger = logging.getLogger(__name__)
 
 
 _TOML_TEMPLATE = """\
+run_type = "staged_learning"
+device = "cpu"
+
 [parameters]
-run_type = "reinforcement_learning"
-model_file = "{prior_path}"
-output_csv = "{output_csv}"
+prior_file = "{prior_path}"
+agent_file = "{prior_path}"
+summary_csv_prefix = "{output_prefix}"
 batch_size = {batch_size}
 use_checkpoint = false
+unique_sequences = true
+randomize_smiles = true
 
 [learning_strategy]
 type = "dap"
 sigma = 128
 rate = 0.0001
 
-[stage.0]
-max_score = 1.0
-min_steps = 10
-max_steps = {n_steps}
-chkpt_file = "{chkpt_file}"
-termination = "plateau"
-
-[stage.0.scoring]
-type = "geometric_mean"
-
-[stage.0.scoring.component.0]
-custom_alerts.endpoint = [
-    "[*;$([F,Cl,Br,I])]",
-    "[#6]1:[#6]:[#6]:[#6]:[#6]:[#6]:1",
-]
-custom_alerts.weight = 0.5
-
-[stage.0.scoring.component.1]
-QED.endpoint = ["QED"]
-QED.weight = 1.0
-
-[stage.0.scoring.component.2]
-TanimotoSimilarity.endpoint = ["{reference_smiles}"]
-TanimotoSimilarity.weight = 0.6
-TanimotoSimilarity.params.radius = 2
-TanimotoSimilarity.params.use_counts = false
-
-{predictive_model_block}
-
 [diversity_filter]
 type = "IdenticalMurckoScaffold"
 bucket_size = 25
 minscore = 0.4
 minsimilarity = 0.4
+
+[[stage]]
+max_score = 1.0
+min_steps = 10
+max_steps = {n_steps}
+chkpt_file = "{chkpt_file}"
+termination = "simple"
+
+[stage.scoring]
+type = "geometric_mean"
+
+[[stage.scoring.component]]
+[stage.scoring.component.QED]
+[[stage.scoring.component.QED.endpoint]]
+name = "QED"
+weight = 1.0
+
+[[stage.scoring.component]]
+[stage.scoring.component.TanimotoSimilarity]
+[[stage.scoring.component.TanimotoSimilarity.endpoint]]
+name = "Tanimoto to seed hit"
+weight = 0.6
+params.smiles = ["{reference_smiles}"]
+params.radius = 2
+params.use_counts = false
+params.use_features = false
+
+{predictive_model_block}
 """
 
 
 _PREDICTIVE_MODEL_BLOCK = """\
-[stage.0.scoring.component.3]
-ExternalProcess.endpoint = ["{scoring_script}"]
-ExternalProcess.weight = 0.8
+[[stage.scoring.component]]
+[stage.scoring.component.ExternalProcess]
+[[stage.scoring.component.ExternalProcess.endpoint]]
+name = "pIC50 predictor"
+weight = 0.8
+params.executable = "{python_exe}"
+params.args = "{scoring_script}"
+params.property = "pIC50"
 """
 
 
@@ -99,6 +110,9 @@ class Reinvent4Bridge:
         self.prior_path = r4.get("prior_path", "") or ""
         self.batch_size = int(r4.get("batch_size", 128))
         self.n_steps = int(r4.get("n_steps", 100))
+        # REINVENT4 CLI --log-level: default warning = hide INFO spam, keep WARNING/ERROR.
+        # Use "info" when debugging RL; "error" for minimal stderr (may hide useful warnings).
+        self.log_level = (r4.get("log_level") or "warning").strip().lower()
 
     # ------------------------------------------------------------------
     def run(
@@ -136,13 +150,16 @@ class Reinvent4Bridge:
         if model_predict_fn is not None and featurizer_fn is not None:
             scoring_script = self._write_scoring_script(out_dir, model_predict_fn, featurizer_fn)
             if scoring_script:
-                pred_block = _PREDICTIVE_MODEL_BLOCK.format(scoring_script=str(scoring_script))
+                pred_block = _PREDICTIVE_MODEL_BLOCK.format(
+                    python_exe=sys.executable,
+                    scoring_script=str(scoring_script),
+                )
 
-        output_csv = out_dir / "reinvent4_output.csv"
+        output_prefix = str(out_dir / "reinvent4")
         chkpt_file = out_dir / "reinvent4_agent.ckpt"
         toml_content = _TOML_TEMPLATE.format(
             prior_path=self.prior_path,
-            output_csv=str(output_csv),
+            output_prefix=output_prefix,
             batch_size=self.batch_size,
             n_steps=self.n_steps,
             chkpt_file=str(chkpt_file),
@@ -153,16 +170,30 @@ class Reinvent4Bridge:
         toml_path = out_dir / "reinvent4_config.toml"
         toml_path.write_text(toml_content, encoding="utf-8")
 
-        logger.info("Launching REINVENT4 (steps=%d, batch=%d) ...", self.n_steps, self.batch_size)
+        logger.info(
+            "Launching REINVENT4 (steps=%d, batch=%d, log_level=%s) ...",
+            self.n_steps,
+            self.batch_size,
+            self.log_level,
+        )
         try:
+            env = os.environ.copy()
+            conda_lib = str(Path(sys.executable).parent.parent / "lib")
+            env["LD_LIBRARY_PATH"] = conda_lib + ":" + env.get("LD_LIBRARY_PATH", "")
             result = subprocess.run(
-                [self.reinvent_path, str(toml_path)],
+                [self.reinvent_path, "--log-level", self.log_level, str(toml_path)],
                 capture_output=True,
                 text=True,
                 timeout=3600,
+                env=env,
             )
             if result.returncode != 0:
-                logger.error("REINVENT4 failed (rc=%d): %s", result.returncode, result.stderr[:500])
+                logger.error(
+                    "REINVENT4 failed (rc=%d):\nSTDOUT: %s\nSTDERR: %s",
+                    result.returncode,
+                    result.stdout[-1000:] if result.stdout else "",
+                    result.stderr[-2000:] if result.stderr else "",
+                )
                 return pd.DataFrame()
         except FileNotFoundError:
             logger.error("REINVENT4 executable not found at '%s'", self.reinvent_path)
@@ -171,6 +202,7 @@ class Reinvent4Bridge:
             logger.error("REINVENT4 timed out after 1 hour.")
             return pd.DataFrame()
 
+        output_csv = out_dir / "reinvent4_1.csv"
         return self._parse_output(output_csv)
 
     # ------------------------------------------------------------------
@@ -199,17 +231,17 @@ class Reinvent4Bridge:
         script.write_text(
             f"""#!/usr/bin/env python
 \"\"\"REINVENT4 external scoring script — predicted pIC50.\"\"\"
-import sys, joblib, numpy as np
+import sys, json, joblib, numpy as np
 model = joblib.load("{model_pkl}")
 feat  = joblib.load("{feat_pkl}")
 smiles = [line.strip() for line in sys.stdin if line.strip()]
 if not smiles:
+    print(json.dumps({{"payload": {{"pIC50": []}}}})  )
     sys.exit(0)
 X = feat(smiles)
 preds = model(X)
-preds_norm = np.clip((preds - 5.0) / 5.0, 0.0, 1.0)
-for v in preds_norm:
-    print(f"{{v:.4f}}")
+scores = np.clip((preds - 5.0) / 5.0, 0.0, 1.0).tolist()
+print(json.dumps({{"payload": {{"pIC50": scores}}}}))
 """,
             encoding="utf-8",
         )

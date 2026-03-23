@@ -117,6 +117,8 @@ hit_to_lead:
     prior_path: "/root/REINVENT4/priors/reinvent.prior"
     batch_size: 128
     n_steps: 100
+    # reinvent CLI: warning = 不刷 INFO，仍显示 WARNING/ERROR；info 排障；error 最简（慎用）
+    log_level: warning
 
   output:
     top_n_leads: 50
