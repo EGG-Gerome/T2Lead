@@ -140,6 +140,9 @@ conda install -c conda-forge openmmforcefields openff-toolkit -y
 ```bash
 cp .env.example .env
 # 编辑 .env 填入所需密钥
+# Stage 3 使用 REINVENT4 时，必须使用生效的 DP_ 覆盖项：
+export DP_HIT_TO_LEAD__REINVENT4__REINVENT_PATH=/root/miniconda3/envs/t2lead/bin/reinvent
+export DP_HIT_TO_LEAD__REINVENT4__PRIOR_PATH=/root/REINVENT4/priors/reinvent.prior
 ```
 
 ## 使用说明

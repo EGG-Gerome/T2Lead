@@ -141,6 +141,9 @@ Copy `.env.example` to `.env` and fill in any needed keys:
 
 ```bash
 cp .env.example .env
+# For Stage 3 REINVENT4, use effective DP_ overrides:
+export DP_HIT_TO_LEAD__REINVENT4__REINVENT_PATH=/root/miniconda3/envs/t2lead/bin/reinvent
+export DP_HIT_TO_LEAD__REINVENT4__PRIOR_PATH=/root/REINVENT4/priors/reinvent.prior
 ```
 
 ## Usage
