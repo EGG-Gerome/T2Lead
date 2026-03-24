@@ -85,6 +85,22 @@ T2Lead/
 
 ## 安装
 
+### 快速开始（Makefile）
+
+```bash
+# 核心安装
+make install
+
+# 可选：阶段三 REINVENT4
+make install-reinvent4
+make download-reinvent4-prior
+
+# 运行全流程
+make run DISEASE="breast cancer"
+```
+
+### 分步安装
+
 ### 环境要求
 
 - Python >= 3.9
@@ -124,6 +140,11 @@ bash scripts/download_crem_db.sh
 # 7. （可选）REINVENT4 用于阶段三强化学习分子生成
 git clone https://github.com/MolecularAI/REINVENT4.git
 cd REINVENT4 && pip install -e . && cd ..
+mkdir -p /root/REINVENT4/priors
+curl -L "https://zenodo.org/api/records/15641297/files/reinvent.prior/content" \
+  -o /root/REINVENT4/priors/reinvent.prior
+# 可选：如果 REINVENT4 提示 prior 元数据 hash 无效
+python scripts/fix_reinvent_prior_metadata.py /root/REINVENT4/priors/reinvent.prior
 
 # 8. （可选）阶段四分子对接
 pip install vina meeko gemmi

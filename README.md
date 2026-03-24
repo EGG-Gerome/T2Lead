@@ -85,6 +85,22 @@ T2Lead/
 
 ## Installation
 
+### Quick Start (Makefile)
+
+```bash
+# Core setup
+make install
+
+# Optional: Stage 3 REINVENT4
+make install-reinvent4
+make download-reinvent4-prior
+
+# Run full pipeline
+make run DISEASE="breast cancer"
+```
+
+### Step-by-step Installation
+
 ### Prerequisites
 
 - Python >= 3.9
@@ -124,6 +140,11 @@ bash scripts/download_crem_db.sh
 # 7. (Optional) REINVENT4 for RL-based molecular generation in Stage 3
 git clone https://github.com/MolecularAI/REINVENT4.git
 cd REINVENT4 && pip install -e . && cd ..
+mkdir -p /root/REINVENT4/priors
+curl -L "https://zenodo.org/api/records/15641297/files/reinvent.prior/content" \
+  -o /root/REINVENT4/priors/reinvent.prior
+# Optional: if REINVENT4 reports "invalid hash" for prior metadata
+python scripts/fix_reinvent_prior_metadata.py /root/REINVENT4/priors/reinvent.prior
 
 # 8. (Optional) Molecular docking in Stage 4
 pip install vina meeko gemmi
