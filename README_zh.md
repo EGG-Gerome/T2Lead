@@ -107,7 +107,7 @@ make run DISEASE="breast cancer"
 - RDKit（建议通过 conda 安装）
 - 推荐 NVIDIA GPU（CUDA）用于 MLP 训练 + MD 模拟加速
 
-> **GPU 兼容性**：RTX 50 系列（Blackwell，如 RTX 5090）需要 CUDA 12.8+ 的 PyTorch（`cu128` 版本）。RTX 40 系列（Ada）用 CUDA 12.4+（`cu124`）。RTX 30 系列（Ampere）用 CUDA 11.8+（`cu118`）。详见下方步骤 5。
+> **GPU 兼容性**：RTX 50 系列（Blackwell，如 RTX 5090）需要 CUDA 12.8+ 的 PyTorch（`cu128` 版本）。RTX 40 系列（Ada）用 CUDA 12.4+（`cu124`）。RTX 30 系列（Ampere）用 CUDA 11.8+（`cu118`）。详见下方步骤 4。
 
 ### 安装步骤
 
@@ -121,23 +121,20 @@ conda init && source ~/.bashrc	# 首次安装 conda 后要执行
 conda activate t2lead
 conda install -c conda-forge rdkit -y
 
-# 3. 安装核心依赖
+# 3. 安装软件包与核心依赖（版本见 pyproject.toml）
 pip install -r requirements.txt
 
-# 4. 以可编辑模式安装
-pip install -e .
-
-# 5. （可选）深度学习支持 — 根据你的 GPU 选择一行执行：
+# 4. （可选）深度学习支持 — 根据你的 GPU 选择一行执行：
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080 (Ampere)
 # pip install torch torchvision  # 仅 CPU（无 GPU）
 
-# 6. （可选）CReM 用于阶段三类似物生成
+# 5. （可选）CReM 用于阶段三类似物生成
 pip install crem
 bash scripts/download_crem_db.sh
 
-# 7. （可选）REINVENT4 用于阶段三强化学习分子生成
+# 6. （可选）REINVENT4 用于阶段三强化学习分子生成
 git clone https://github.com/MolecularAI/REINVENT4.git
 cd REINVENT4 && pip install -e . && cd ..
 mkdir -p /root/REINVENT4/priors
@@ -146,13 +143,13 @@ curl -L "https://zenodo.org/api/records/15641297/files/reinvent.prior/content" \
 # 可选：如果 REINVENT4 提示 prior 元数据 hash 无效
 python scripts/fix_reinvent_prior_metadata.py /root/REINVENT4/priors/reinvent.prior
 
-# 8. （可选）阶段四分子对接
-pip install vina meeko gemmi
+# 7. （可选）阶段四分子对接
+pip install -e ".[docking]"   # vina、meeko、gemmi（见 pyproject.toml）
 
-# 9. （可选）阶段四 MD 模拟（GPU 加速）
+# 8. （可选）阶段四 MD 模拟（GPU 加速）
 conda install -c conda-forge openmm pdbfixer mdtraj -y
 
-# 10. （可选）MD 配体力场参数化（GAFF2）
+# 9. （可选）MD 配体力场参数化（GAFF2）
 conda install -c conda-forge openmmforcefields openff-toolkit -y
 ```
 

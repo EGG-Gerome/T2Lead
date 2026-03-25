@@ -107,7 +107,7 @@ make run DISEASE="breast cancer"
 - RDKit (install via conda or pip)
 - NVIDIA GPU recommended (CUDA) for MLP training + MD simulation
 
-> **GPU Compatibility**: RTX 50-series (Blackwell, e.g. RTX 5090) requires PyTorch with CUDA 12.8+ (`cu128` wheels). RTX 40-series (Ada) works with CUDA 12.4+ (`cu124`). RTX 30-series (Ampere) works with CUDA 11.8+ (`cu118`). See step 5 below.
+> **GPU Compatibility**: RTX 50-series (Blackwell, e.g. RTX 5090) requires PyTorch with CUDA 12.8+ (`cu128` wheels). RTX 40-series (Ada) works with CUDA 12.4+ (`cu124`). RTX 30-series (Ampere) works with CUDA 11.8+ (`cu118`). See step 4 below.
 
 ### Steps
 
@@ -121,23 +121,20 @@ conda init && source ~/.bashrc	# Run only after first Conda installation
 conda activate t2lead
 conda install -c conda-forge rdkit -y
 
-# 3. Install core dependencies
+# 3. Install package + core dependencies (versions listed in pyproject.toml)
 pip install -r requirements.txt
 
-# 4. Install the package in editable mode
-pip install -e .
-
-# 5. (Optional) Deep learning support — choose ONE line matching your GPU:
+# 4. (Optional) Deep learning support — choose ONE line matching your GPU:
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080 (Ampere)
 # pip install torch torchvision  # CPU only (no GPU)
 
-# 6. (Optional) CReM for analog generation in Stage 3
+# 5. (Optional) CReM for analog generation in Stage 3
 pip install crem
 bash scripts/download_crem_db.sh
 
-# 7. (Optional) REINVENT4 for RL-based molecular generation in Stage 3
+# 6. (Optional) REINVENT4 for RL-based molecular generation in Stage 3
 git clone https://github.com/MolecularAI/REINVENT4.git
 cd REINVENT4 && pip install -e . && cd ..
 mkdir -p /root/REINVENT4/priors
@@ -146,13 +143,13 @@ curl -L "https://zenodo.org/api/records/15641297/files/reinvent.prior/content" \
 # Optional: if REINVENT4 reports "invalid hash" for prior metadata
 python scripts/fix_reinvent_prior_metadata.py /root/REINVENT4/priors/reinvent.prior
 
-# 8. (Optional) Molecular docking in Stage 4
-pip install vina meeko gemmi
+# 7. (Optional) Molecular docking in Stage 4
+pip install -e ".[docking]"   # vina, meeko, gemmi (see pyproject.toml)
 
-# 9. (Optional) MD simulation in Stage 4 (GPU-accelerated)
+# 8. (Optional) MD simulation in Stage 4 (GPU-accelerated)
 conda install -c conda-forge openmm pdbfixer mdtraj -y
 
-# 10. (Optional) MD ligand parameterization (GAFF2 force field)
+# 9. (Optional) MD ligand parameterization (GAFF2 force field)
 conda install -c conda-forge openmmforcefields openff-toolkit -y
 ```
 

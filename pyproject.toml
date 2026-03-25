@@ -22,10 +22,10 @@ dependencies = [
 [project.optional-dependencies]
 dl = ["torch"]
 h2l = ["crem"]
-docking = ["vina", "meeko"]
+docking = ["vina", "meeko", "gemmi"]
 md = ["openmm", "pdbfixer", "mdtraj"]
-lead_opt = ["vina", "meeko", "openmm", "pdbfixer", "mdtraj"]
-all = ["torch", "crem", "vina", "meeko"]
+lead_opt = ["vina", "meeko", "gemmi", "openmm", "pdbfixer", "mdtraj"]
+all = ["torch", "crem", "vina", "meeko", "gemmi"]
 
 [project.scripts]
 t2lead = "drugpipe.pipeline:main"
