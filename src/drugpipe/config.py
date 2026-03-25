@@ -111,6 +111,22 @@ def get_out_dir(cfg: Dict[str, Any]) -> Path:
     """Return output directory and create it when missing.
     返回输出目录，并在不存在时自动创建。
     """
-    out = Path(cfg["pipeline"]["out_dir"])
+    out_raw = cfg["pipeline"]["out_dir"]
+    out = Path(out_raw)
+
+    # Autodl containers often have a small root overlay filesystem (/) and large
+    # mounted storage under /autodl-fs. If the user kept the default relative
+    # output (./data), prefer the large mount automatically to avoid "No space"
+    # failures during Stage 2 screening caches (fingerprints can be tens of GB).
+    if not out.is_absolute():
+        try:
+            if str(out) in ("data", "./data"):
+                big_mount = Path("/autodl-fs/data")
+                if big_mount.exists():
+                    out = big_mount / "T2Lead"
+                    cfg.setdefault("pipeline", {})["out_dir"] = str(out)
+        except Exception:
+            # Never fail config loading due to an optional heuristic.
+            pass
     out.mkdir(parents=True, exist_ok=True)
     return out

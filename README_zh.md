@@ -158,6 +158,12 @@ conda install -c conda-forge openmmforcefields openff-toolkit -y
 ```bash
 cp .env.example .env
 # 编辑 .env 填入所需密钥
+# 推荐（AutoDL/容器环境根盘较小时）：把所有输出（数据集、缓存、日志、对接结果等）放到大盘挂载
+export DP_PIPELINE__OUT_DIR=/autodl-fs/data/T2Lead
+#
+# （可选）复用已下载的 CReM 片段数据库（无需重新下载）
+export DP_HIT_TO_LEAD__ANALOG_GEN__CREM_DB_PATH=/root/autodl-fs/crem_db/chembl33_sa25_f5.db
+#
 # Stage 3 使用 REINVENT4 时，必须使用生效的 DP_ 覆盖项：
 export DP_HIT_TO_LEAD__REINVENT4__REINVENT_PATH=/root/miniconda3/envs/t2lead/bin/reinvent
 export DP_HIT_TO_LEAD__REINVENT4__PRIOR_PATH=/root/REINVENT4/priors/reinvent.prior

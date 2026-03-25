@@ -159,6 +159,13 @@ Copy `.env.example` to `.env` and fill in any needed keys:
 
 ```bash
 cp .env.example .env
+# Recommended on AutoDL / containers with small root disks:
+# Put all pipeline outputs (datasets, caches, logs, docking poses, etc.) on the large mount.
+export DP_PIPELINE__OUT_DIR=/autodl-fs/data/T2Lead
+#
+# (Optional) Reuse an existing CReM fragment DB (skip re-downloading):
+export DP_HIT_TO_LEAD__ANALOG_GEN__CREM_DB_PATH=/root/autodl-fs/crem_db/chembl33_sa25_f5.db
+#
 # For Stage 3 REINVENT4, use effective DP_ overrides:
 export DP_HIT_TO_LEAD__REINVENT4__REINVENT_PATH=/root/miniconda3/envs/t2lead/bin/reinvent
 export DP_HIT_TO_LEAD__REINVENT4__PRIOR_PATH=/root/REINVENT4/priors/reinvent.prior
