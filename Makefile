@@ -1,5 +1,12 @@
 .PHONY: help install install-reinvent4 download-reinvent4-prior run run-docking clean clean-all clean-logs
 
+# Default /bin/sh often lacks conda on PATH (non-login, no profile). Use bash -l so
+# system profile (~/.profile, /etc/profile) runs; prepend conda bin as fallback.
+SHELL := /bin/bash
+.SHELLFLAGS := -lc
+CONDA_ROOT ?= $(HOME)/miniconda3
+export PATH := $(CONDA_ROOT)/bin:$(PATH)
+
 CONDA_ENV  := t2lead
 # Without --no-capture-output, conda run holds logs until exit (looks hung on long runs).
 PYTHON     := conda run --no-capture-output -n $(CONDA_ENV) python
