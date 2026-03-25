@@ -122,7 +122,7 @@ conda activate t2lead
 conda install -c conda-forge rdkit -y
 
 # 3. Install package + core dependencies (versions listed in pyproject.toml)
-pip install -r requirements.txt
+pip install -e .
 
 # 4. (Optional) Deep learning support — choose ONE line matching your GPU:
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)

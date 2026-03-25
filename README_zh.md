@@ -122,7 +122,7 @@ conda activate t2lead
 conda install -c conda-forge rdkit -y
 
 # 3. 安装软件包与核心依赖（版本见 pyproject.toml）
-pip install -r requirements.txt
+pip install -e .
 
 # 4. （可选）深度学习支持 — 根据你的 GPU 选择一行执行：
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)

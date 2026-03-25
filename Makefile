@@ -21,7 +21,7 @@ help:  ## Show this help
 install:  ## Create conda env and install core dependencies
 	conda create -n $(CONDA_ENV) python=3.11 -y
 	conda install -n $(CONDA_ENV) -c conda-forge rdkit -y
-	$(PYTHON) -m pip install -r requirements.txt
+	$(PYTHON) -m pip install -e .
 	@echo "\n--- Optional: GPU support ---"
 	@echo "  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128"
 	@echo "--- Optional: docking ---"
