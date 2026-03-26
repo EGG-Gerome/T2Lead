@@ -93,7 +93,7 @@ T2Lead/
 cd T2Lead
 
 # 默认 PyTorch 为 CUDA 12.4 轮子（RTX 40 系）。可按需覆盖：
-#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128   # Blackwell (RTX 50) — PyTorch MLP 可用 GPU；OpenMM MD 回退到 CPU（暂不支持 Blackwell）
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128   # Blackwell (RTX 50)
 #   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118   # Ampere (RTX 30)
 #   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu     # 仅 CPU
 make install
@@ -114,7 +114,7 @@ make run DISEASE="breast cancer"
 - RDKit（建议通过 conda 安装）
 - 推荐 NVIDIA GPU（CUDA）用于 MLP 训练 + MD 模拟加速
 
-> **GPU 兼容性**：RTX 40 系列（Ada，如 RTX 4090）用 CUDA 12.4+（`cu124`）——PyTorch MLP 训练与 OpenMM MD 模拟均可全速使用 GPU。RTX 30 系列（Ampere）用 CUDA 11.8+（`cu118`）。RTX 50 系列（Blackwell，如 RTX 5090）需要 PyTorch `cu128` 轮子以支持 MLP 训练，**但 OpenMM 尚不支持 Blackwell GPU**——MD 模拟（阶段四）会自动回退到 CPU，速度将大幅下降。如需避免等待，可在 `configs/default_config.yaml` 中设置 `lead_optimization.md_simulation.enabled: false` 禁用 MD。
+> **GPU 兼容性**：RTX 50 系列（Blackwell，如 RTX 5090）需要 CUDA 12.8+ 的 PyTorch（`cu128` 版本）。RTX 40 系列（Ada）用 CUDA 12.4+（`cu124`）。RTX 30 系列（Ampere）用 CUDA 11.8+（`cu118`）。详见下方步骤 4。
 
 ### 安装步骤
 
@@ -133,7 +133,7 @@ pip install -e ".[docking,h2l]"
 
 # 4. 深度学习 — 根据 GPU（或 CPU）选择一行：
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080（与 Makefile 默认一致）
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080（Blackwell）— MLP 用 GPU；OpenMM MD 回退 CPU（暂不支持 Blackwell）
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080
 # pip install torch torchvision  # 仅 CPU（PyPI）
 
