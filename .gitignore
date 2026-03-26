@@ -48,3 +48,6 @@ logs/
 
 # CReM database
 *.db
+
+# REINVENT4 (cloned by make install; third-party)
+REINVENT4/

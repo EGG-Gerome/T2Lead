@@ -87,19 +87,26 @@ T2Lead/
 
 ### Quick Start (Makefile)
 
-```bash
-# Core setup
-make install
+From the repo root, **one command** creates the `t2lead` conda env (if missing), installs RDKit plus the OpenMM / MD stack from conda-forge, `pip install -e ".[docking,h2l]"`, PyTorch, downloads the default CReM fragment database, clones **REINVENT4** into `./REINVENT4`, fetches the prior checkpoint, runs the optional prior-metadata fix, and writes **`.env`** with `DP_*` paths for REINVENT4 and CReM. Expect a **large download** and **tens of minutes** on first run.
 
-# Optional: Stage 3 REINVENT4
-make install-reinvent4
-make download-reinvent4-prior
+```bash
+cd T2Lead
+
+# Default PyTorch index: CUDA 12.4 wheels (RTX 40-series, Ada). Override when needed:
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128   # Blackwell (RTX 50)
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118   # Ampere (RTX 30)
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu     # CPU-only
+make install
 
 # Run full pipeline
 make run DISEASE="breast cancer"
 ```
 
+Partial targets (e.g. refresh REINVENT4 only): `make install-reinvent4` (alias of `install-reinvent4-full`), `make download-reinvent4-prior`, `make install-env` (re-write `DP_*` in `.env` after manual path changes).
+
 ### Step-by-step Installation
+
+The steps below mirror **`make install`** if you cannot use Make.
 
 ### Prerequisites
 
@@ -115,60 +122,51 @@ make run DISEASE="breast cancer"
 # 1. Clone / enter the project
 cd T2Lead
 
-# 2. Create a conda environment (recommended for RDKit)
+# 2. Create a conda environment (recommended for RDKit + OpenMM)
 conda create -n t2lead python=3.11 -y
 conda init && source ~/.bashrc	# Run only after first Conda installation
 conda activate t2lead
-conda install -c conda-forge rdkit -y
+conda install -c conda-forge rdkit openmm pdbfixer mdtraj openmmforcefields openff-toolkit -y
 
-# 3. Install package + core dependencies (versions listed in pyproject.toml)
-pip install -e .
+# 3. Install package + docking + CReM extras (versions in pyproject.toml)
+pip install -e ".[docking,h2l]"
 
-# 4. (Optional) Deep learning support — choose ONE line matching your GPU:
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada)
+# 4. Deep learning — choose ONE line matching your GPU (or CPU):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada); Makefile default
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080 (Ampere)
-# pip install torch torchvision  # CPU only (no GPU)
+# pip install torch torchvision  # CPU only (PyPI)
 
-# 5. (Optional) CReM for analog generation in Stage 3
-pip install crem
+# 5. CReM fragment database (same default as Makefile)
 bash scripts/download_crem_db.sh
 
-# 6. (Optional) REINVENT4 for RL-based molecular generation in Stage 3
-git clone https://github.com/MolecularAI/REINVENT4.git
-cd REINVENT4 && pip install -e . && cd ..
-mkdir -p /root/REINVENT4/priors
+# 6. REINVENT4 + prior (default directory matches Makefile: ./REINVENT4)
+git clone https://github.com/MolecularAI/REINVENT4.git REINVENT4
+pip install -e ./REINVENT4
+mkdir -p REINVENT4/priors
 curl -L "https://zenodo.org/api/records/15641297/files/reinvent.prior/content" \
-  -o /root/REINVENT4/priors/reinvent.prior
-# Optional: if REINVENT4 reports "invalid hash" for prior metadata
-python scripts/fix_reinvent_prior_metadata.py /root/REINVENT4/priors/reinvent.prior
+  -o REINVENT4/priors/reinvent.prior
+python scripts/fix_reinvent_prior_metadata.py REINVENT4/priors/reinvent.prior || true
 
-# 7. (Optional) Molecular docking in Stage 4
-pip install -e ".[docking]"   # vina, meeko, gemmi (see pyproject.toml)
-
-# 8. (Optional) MD simulation in Stage 4 (GPU-accelerated)
-conda install -c conda-forge openmm pdbfixer mdtraj -y
-
-# 9. (Optional) MD ligand parameterization (GAFF2 force field)
-conda install -c conda-forge openmmforcefields openff-toolkit -y
+# 7. .env — same as the end of `make install` (DP_* paths for REINVENT4 + CReM)
+cp .env.example .env
+python scripts/bootstrap_env.py --env-file .env --conda-prefix "$CONDA_PREFIX" \
+  --prior-path "$(realpath REINVENT4/priors/reinvent.prior)" \
+  --crem-db "$(realpath data/crem_db/chembl33_sa25_f5.db)"
 ```
 
 ### Environment Variables
 
-Copy `.env.example` to `.env` and fill in any needed keys:
+**`make install`** copies `.env.example` to `.env` when missing and appends `DP_HIT_TO_LEAD__REINVENT4__REINVENT_PATH`, `DP_HIT_TO_LEAD__REINVENT4__PRIOR_PATH`, and `DP_HIT_TO_LEAD__ANALOG_GEN__CREM_DB_PATH` for the current machine (idempotent; re-run `make install-env` after moving conda or the repo).
+
+Additional overrides (shell or `.env`):
 
 ```bash
-cp .env.example .env
-# Recommended on AutoDL / containers with small root disks:
-# Put all pipeline outputs (datasets, caches, logs, docking poses, etc.) on the large mount.
+# Recommended on AutoDL / containers with small root disks — put outputs on the large mount:
 export DP_PIPELINE__OUT_DIR=/autodl-fs/data/T2Lead
-#
-# (Optional) Reuse an existing CReM fragment DB (skip re-downloading):
-export DP_HIT_TO_LEAD__ANALOG_GEN__CREM_DB_PATH=/root/autodl-fs/crem_db/chembl33_sa25_f5.db
-#
-# For Stage 3 REINVENT4, use effective DP_ overrides:
-export DP_HIT_TO_LEAD__REINVENT4__REINVENT_PATH=/root/miniconda3/envs/t2lead/bin/reinvent
-export DP_HIT_TO_LEAD__REINVENT4__PRIOR_PATH=/root/REINVENT4/priors/reinvent.prior
+
+# Optional: reuse a CReM DB elsewhere instead of the default under data/crem_db/
+# export DP_HIT_TO_LEAD__ANALOG_GEN__CREM_DB_PATH=/path/to/chembl33_sa25_f5.db
 ```
 
 ## Usage

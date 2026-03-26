@@ -100,7 +100,8 @@ hit_to_lead:
   analog_gen:
     enabled: true
     max_analogs_per_hit: 50
-    crem_db_path: ""                 # path to CReM fragment DB; empty = skip CReM
+    # Default matches scripts/download_crem_db.sh (run from repo root or use make install).
+    crem_db_path: data/crem_db/chembl33_sa25_f5.db
     crem_radius: 3
     crem_min_size: 0
     crem_max_size: 10
@@ -112,9 +113,10 @@ hit_to_lead:
     w_novelty: 0.15
 
   reinvent4:
-    enabled: true                    # set to true to enable RL-based molecular optimization
-    reinvent_path: "/root/miniconda3/envs/t2lead/bin/reinvent"
-    prior_path: "/root/REINVENT4/priors/reinvent.prior"
+    enabled: true                    # RL-based molecular optimization (needs REINVENT4 + prior)
+    # Paths are normally set via .env (DP_HIT_TO_LEAD__REINVENT4__*) by `make install`.
+    reinvent_path: ""
+    prior_path: ""
     batch_size: 128
     n_steps: 100
     # reinvent CLI: warning = 不刷 INFO，仍显示 WARNING/ERROR；info 排障；error 最简（慎用）

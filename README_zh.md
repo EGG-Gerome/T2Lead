@@ -87,19 +87,26 @@ T2Lead/
 
 ### 快速开始（Makefile）
 
-```bash
-# 核心安装
-make install
+在仓库根目录执行 **`make install`** 会（若尚无环境则）创建 `t2lead` conda 环境，安装 RDKit 与 conda-forge 上的 OpenMM/MD 相关包，`pip install -e ".[docking,h2l]"`，安装 PyTorch，下载默认 CReM 片段库，将 **REINVENT4** 克隆到 `./REINVENT4` 并下载 prior、尝试修复元数据，最后生成 **`.env`** 并写入 REINVENT4 与 CReM 的 `DP_*` 路径。首次执行**下载量大、耗时可达数十分钟**。
 
-# 可选：阶段三 REINVENT4
-make install-reinvent4
-make download-reinvent4-prior
+```bash
+cd T2Lead
+
+# 默认 PyTorch 为 CUDA 12.4 轮子（RTX 40 系）。可按需覆盖：
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128   # Blackwell (RTX 50)
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118   # Ampere (RTX 30)
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu     # 仅 CPU
+make install
 
 # 运行全流程
 make run DISEASE="breast cancer"
 ```
 
+仅重装部分组件时：`make install-reinvent4`（等同于 `install-reinvent4-full`）、`make download-reinvent4-prior`、在手动改路径后执行 `make install-env` 以重写 `.env` 中的 `DP_*`。
+
 ### 分步安装
+
+以下步骤与 **`make install`** 等价，适用于无法使用 Make 的环境。
 
 ### 环境要求
 
@@ -115,58 +122,51 @@ make run DISEASE="breast cancer"
 # 1. 进入项目目录
 cd T2Lead
 
-# 2. 创建 conda 环境（推荐）
+# 2. 创建 conda 环境（推荐：RDKit + OpenMM 栈）
 conda create -n t2lead python=3.11 -y
 conda init && source ~/.bashrc	# 首次安装 conda 后要执行
 conda activate t2lead
-conda install -c conda-forge rdkit -y
+conda install -c conda-forge rdkit openmm pdbfixer mdtraj openmmforcefields openff-toolkit -y
 
-# 3. 安装软件包与核心依赖（版本见 pyproject.toml）
-pip install -e .
+# 3. 安装软件包 + 对接 + CReM（版本见 pyproject.toml）
+pip install -e ".[docking,h2l]"
 
-# 4. （可选）深度学习支持 — 根据你的 GPU 选择一行执行：
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada)
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080 (Ampere)
-# pip install torch torchvision  # 仅 CPU（无 GPU）
+# 4. 深度学习 — 根据 GPU（或 CPU）选择一行：
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080（与 Makefile 默认一致）
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080
+# pip install torch torchvision  # 仅 CPU（PyPI）
 
-# 5. （可选）CReM 用于阶段三类似物生成
-pip install crem
+# 5. CReM 片段库（与 Makefile 默认一致）
 bash scripts/download_crem_db.sh
 
-# 6. （可选）REINVENT4 用于阶段三强化学习分子生成
-git clone https://github.com/MolecularAI/REINVENT4.git
-cd REINVENT4 && pip install -e . && cd ..
-mkdir -p /root/REINVENT4/priors
+# 6. REINVENT4 + prior（默认目录与 Makefile 一致：./REINVENT4）
+git clone https://github.com/MolecularAI/REINVENT4.git REINVENT4
+pip install -e ./REINVENT4
+mkdir -p REINVENT4/priors
 curl -L "https://zenodo.org/api/records/15641297/files/reinvent.prior/content" \
-  -o /root/REINVENT4/priors/reinvent.prior
-# 可选：如果 REINVENT4 提示 prior 元数据 hash 无效
-python scripts/fix_reinvent_prior_metadata.py /root/REINVENT4/priors/reinvent.prior
+  -o REINVENT4/priors/reinvent.prior
+python scripts/fix_reinvent_prior_metadata.py REINVENT4/priors/reinvent.prior || true
 
-# 7. （可选）阶段四分子对接
-pip install -e ".[docking]"   # vina、meeko、gemmi（见 pyproject.toml）
-
-# 8. （可选）阶段四 MD 模拟（GPU 加速）
-conda install -c conda-forge openmm pdbfixer mdtraj -y
-
-# 9. （可选）MD 配体力场参数化（GAFF2）
-conda install -c conda-forge openmmforcefields openff-toolkit -y
+# 7. .env（与 make install 末尾一致：写入 REINVENT4 与 CReM 的 DP_*）
+cp .env.example .env
+python scripts/bootstrap_env.py --env-file .env --conda-prefix "$CONDA_PREFIX" \
+  --prior-path "$(realpath REINVENT4/priors/reinvent.prior)" \
+  --crem-db "$(realpath data/crem_db/chembl33_sa25_f5.db)"
 ```
 
 ### 环境变量
 
+**`make install`** 会在没有 `.env` 时从 `.env.example` 复制，并追加当前机器上的 `DP_HIT_TO_LEAD__REINVENT4__REINVENT_PATH`、`DP_HIT_TO_LEAD__REINVENT4__PRIOR_PATH`、`DP_HIT_TO_LEAD__ANALOG_GEN__CREM_DB_PATH`（可重复执行；移动 conda 或仓库后请再执行 `make install-env`）。
+
+其他覆盖项（shell 或 `.env`）：
+
 ```bash
-cp .env.example .env
-# 编辑 .env 填入所需密钥
-# 推荐（AutoDL/容器环境根盘较小时）：把所有输出（数据集、缓存、日志、对接结果等）放到大盘挂载
+# 推荐（AutoDL 等根盘较小时）：输出放到大盘
 export DP_PIPELINE__OUT_DIR=/autodl-fs/data/T2Lead
-#
-# （可选）复用已下载的 CReM 片段数据库（无需重新下载）
-export DP_HIT_TO_LEAD__ANALOG_GEN__CREM_DB_PATH=/root/autodl-fs/crem_db/chembl33_sa25_f5.db
-#
-# Stage 3 使用 REINVENT4 时，必须使用生效的 DP_ 覆盖项：
-export DP_HIT_TO_LEAD__REINVENT4__REINVENT_PATH=/root/miniconda3/envs/t2lead/bin/reinvent
-export DP_HIT_TO_LEAD__REINVENT4__PRIOR_PATH=/root/REINVENT4/priors/reinvent.prior
+
+# 可选：改用其他路径的 CReM 库
+# export DP_HIT_TO_LEAD__ANALOG_GEN__CREM_DB_PATH=/path/to/chembl33_sa25_f5.db
 ```
 
 ## 使用说明
