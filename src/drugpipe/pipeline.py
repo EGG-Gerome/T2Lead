@@ -221,8 +221,36 @@ def run_hit_to_lead(
         df_r4 = r4.run(df_hits, out_dir, model_predict_fn=model_predict_fn, featurizer_fn=featurizer_fn)
         if not df_r4.empty:
             logger.info("Merging %d REINVENT4 molecules into lead pool.", len(df_r4))
-            df_leads = pd.concat([df_leads, df_r4], ignore_index=True).drop_duplicates(
+            df_merged = pd.concat([df_leads, df_r4], ignore_index=True).drop_duplicates(
                 subset=["canonical_smiles"]
+            )
+
+            from drugpipe.hit_to_lead.mpo import MPOScorer
+            mpo = MPOScorer(cfg)
+            df_merged = mpo.score(
+                df_merged,
+                model_predict_fn=model_predict_fn,
+                featurizer_fn=featurizer_fn,
+            )
+
+            top_n = int(
+                cfg.get("hit_to_lead", {}).get("output", {}).get("top_n_leads", 50)
+            )
+            df_merged = df_merged.dropna(subset=["mpo_score"])
+            df_merged = df_merged.sort_values("mpo_score", ascending=False)
+            df_leads = df_merged.head(top_n).reset_index(drop=True)
+
+            leads_csv = out_dir / "final_lead_candidates.csv"
+            keep_cols = [
+                "canonical_smiles", "source_smiles", "origin",
+                "pred_pIC50_ens", "QED", "mpo_score",
+                "admet_pass", "HasAlert", "scaffold_smi", "cluster_id",
+            ]
+            keep_cols = [c for c in keep_cols if c in df_leads.columns]
+            df_leads[keep_cols].to_csv(leads_csv, index=False)
+            logger.info(
+                "Re-ranked leads after REINVENT4 merge: %s (%d rows)",
+                leads_csv, len(df_leads),
             )
 
     logger.info("Stage 3 complete — %d lead candidates.", len(df_leads))
