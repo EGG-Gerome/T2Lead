@@ -92,10 +92,11 @@ T2Lead/
 ```bash
 cd T2Lead
 
-# 默认 PyTorch 为 CUDA 12.4 轮子（RTX 40 系）。可按需覆盖：
+# 默认安装 CUDA 12.4 的 PyTorch（cu124），适合 RTX 4090/4080 等 Ada 显卡；有 GPU 时优先用 GPU。
+# 仅在需要时覆盖：
 #   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128   # Blackwell (RTX 50)
 #   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118   # Ampere (RTX 30)
-#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu     # 仅 CPU
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu     # 纯 CPU 机器
 make install
 
 # 运行全流程
@@ -103,6 +104,8 @@ make run DISEASE="breast cancer"
 ```
 
 仅重装部分组件时：`make install-reinvent4`（等同于 `install-reinvent4-full`）、`make download-reinvent4-prior`、在手动改路径后执行 `make install-env` 以重写 `.env` 中的 `DP_*`。
+
+**Makefile 补充说明：** Makefile 会把 `$(HOME)/miniconda3/bin` 加到 `PATH` 前。若 Conda 装在其他位置（Anaconda、Miniforge、`/opt/conda` 等），请传入 `CONDA_ROOT`，例如 `make install CONDA_ROOT=/opt/conda`。`pyproject.toml` 里的可选依赖组 `all` 只汇总 pip 包（`torch`、CReM、对接相关），**不能**替代 **conda-forge** 的 RDKit + OpenMM 栈；需要 MD 与完整流水线时仍请使用 `make install` 或文档中的 conda 安装步骤。
 
 ### 分步安装
 

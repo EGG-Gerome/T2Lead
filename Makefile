@@ -15,7 +15,8 @@ PYTHON     := conda run --no-capture-output -n $(CONDA_ENV) python
 # Conda env is isolated; suppress pip's generic "running as root" warning in containers.
 export PIP_ROOT_USER_ACTION := ignore
 DISEASE    ?= breast cancer
-# PyTorch CUDA wheels: override for your GPU (Blackwell cu128, Ampere cu118, CPU: omit index — see README).
+# PyTorch: default CUDA 12.4 wheels (cu124) — matches RTX 4090/4080 and other Ada GPUs; prefer GPU when available.
+# This recipe always passes --index-url. Override TORCH_INDEX_URL for Blackwell (cu128), Ampere (cu118), or CPU-only (whl/cpu).
 TORCH_INDEX_URL ?= https://download.pytorch.org/whl/cu124
 REINVENT4_DIR ?= $(CURDIR)/REINVENT4
 REINVENT4_PRIOR_URL ?= https://zenodo.org/api/records/15641297/files/reinvent.prior/content
@@ -43,7 +44,7 @@ install-pip-stack:  ## Editable install + docking + CReM (crem, vina, meeko, gem
 	$(PYTHON) -m pip install -U pip
 	$(PYTHON) -m pip install -e ".[docking,h2l]"
 
-install-torch:  ## PyTorch + torchvision (set TORCH_INDEX_URL for your CUDA / CPU)
+install-torch:  ## PyTorch + torchvision (default cu124 GPU; set TORCH_INDEX_URL otherwise)
 	$(PYTHON) -m pip install torch torchvision --index-url $(TORCH_INDEX_URL)
 
 install-crem-db:  ## Download and extract default CReM fragment database (Zenodo)
@@ -84,8 +85,9 @@ download-reinvent4-prior:  ## (Partial) Download prior into REINVENT4_DIR/priors
 run:  ## Run full pipeline (set DISEASE="lung cancer" to override)
 	$(PYTHON) scripts/run_pipeline.py --disease "$(DISEASE)" -v
 
-run-docking:  ## Run in docking-only mode (set TARGET=CHEMBLXXXX)
-	$(PYTHON) scripts/run_pipeline.py --target $(TARGET) --docking-only -v
+run-docking:  ## Run in docking-only mode (requires TARGET=CHEMBLxxxx)
+	@test -n "$(strip $(TARGET))" || { echo "ERROR: set TARGET to a ChEMBL target ID, e.g. make run-docking TARGET=CHEMBL204" >&2; exit 1; }
+	$(PYTHON) scripts/run_pipeline.py --target "$(TARGET)" --docking-only -v
 
 clean:  ## Remove cached data (fingerprints, models, scored candidates)
 	rm -rf data/fp_cache data/*/model_cache data/*/scored_candidates.csv

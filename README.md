@@ -92,10 +92,11 @@ From the repo root, **one command** creates the `t2lead` conda env (if missing),
 ```bash
 cd T2Lead
 
-# Default PyTorch index: CUDA 12.4 wheels (RTX 40-series, Ada). Override when needed:
+# Default: CUDA 12.4 PyTorch wheels (cu124) — good for RTX 4090/4080 and other Ada GPUs; use a GPU when you have one.
+# Override only when needed:
 #   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128   # Blackwell (RTX 50)
 #   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118   # Ampere (RTX 30)
-#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu     # CPU-only
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu     # CPU-only machines
 make install
 
 # Run full pipeline
@@ -103,6 +104,8 @@ make run DISEASE="breast cancer"
 ```
 
 Partial targets (e.g. refresh REINVENT4 only): `make install-reinvent4` (alias of `install-reinvent4-full`), `make download-reinvent4-prior`, `make install-env` (re-write `DP_*` in `.env` after manual path changes).
+
+**Makefile extras:** The Makefile prepends `$(HOME)/miniconda3/bin` to `PATH`. If Conda is installed elsewhere (Anaconda, Miniforge, `/opt/conda`, etc.), pass `CONDA_ROOT`, e.g. `make install CONDA_ROOT=/opt/conda`. The `all` optional extra in `pyproject.toml` only groups pip packages (`torch`, CReM, docking); it does **not** replace the **conda-forge** RDKit + OpenMM stack—use `make install` or the manual conda step for MD and full pipeline support.
 
 ### Step-by-step Installation
 
