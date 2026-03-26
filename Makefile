@@ -15,7 +15,7 @@ PYTHON     := conda run --no-capture-output -n $(CONDA_ENV) python
 # Conda env is isolated; suppress pip's generic "running as root" warning in containers.
 export PIP_ROOT_USER_ACTION := ignore
 DISEASE    ?= breast cancer
-# PyTorch CUDA wheels: override for your GPU (Blackwell cu128, Ampere cu118, CPU: omit index — see README).
+# PyTorch CUDA wheels: override for your GPU (Blackwell cu128 ⚠ OpenMM MD falls back to CPU — see README, Ampere cu118, CPU: omit index).
 TORCH_INDEX_URL ?= https://download.pytorch.org/whl/cu124
 REINVENT4_DIR ?= $(CURDIR)/REINVENT4
 REINVENT4_PRIOR_URL ?= https://zenodo.org/api/records/15641297/files/reinvent.prior/content

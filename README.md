@@ -93,7 +93,7 @@ From the repo root, **one command** creates the `t2lead` conda env (if missing),
 cd T2Lead
 
 # Default PyTorch index: CUDA 12.4 wheels (RTX 40-series, Ada). Override when needed:
-#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128   # Blackwell (RTX 50)
+#   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128   # Blackwell (RTX 50) — PyTorch MLP uses GPU; OpenMM MD simulation falls back to CPU (no Blackwell support yet)
 #   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cu118   # Ampere (RTX 30)
 #   make install TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu     # CPU-only
 make install
@@ -114,7 +114,7 @@ The steps below mirror **`make install`** if you cannot use Make.
 - RDKit (install via conda or pip)
 - NVIDIA GPU recommended (CUDA) for MLP training + MD simulation
 
-> **GPU Compatibility**: RTX 50-series (Blackwell, e.g. RTX 5090) requires PyTorch with CUDA 12.8+ (`cu128` wheels). RTX 40-series (Ada) works with CUDA 12.4+ (`cu124`). RTX 30-series (Ampere) works with CUDA 11.8+ (`cu118`). See step 4 below.
+> **GPU Compatibility**: RTX 40-series (Ada, e.g. RTX 4090) works fully with CUDA 12.4+ (`cu124`) — both PyTorch MLP training and OpenMM MD simulation use the GPU. RTX 30-series (Ampere) works with CUDA 11.8+ (`cu118`). RTX 50-series (Blackwell, e.g. RTX 5090) requires PyTorch `cu128` wheels for MLP training, **but OpenMM does not yet support Blackwell GPU** — MD simulation (Stage 4) will automatically fall back to CPU and will be significantly slower. To avoid the wait, you can disable MD: set `lead_optimization.md_simulation.enabled: false` in `configs/default_config.yaml`.
 
 ### Steps
 
@@ -133,7 +133,7 @@ pip install -e ".[docking,h2l]"
 
 # 4. Deep learning — choose ONE line matching your GPU (or CPU):
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # RTX 4090/4080 (Ada); Makefile default
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # RTX 5090/5080 (Blackwell) — MLP uses GPU; OpenMM MD falls back to CPU (no Blackwell support yet)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118  # RTX 3090/3080 (Ampere)
 # pip install torch torchvision  # CPU only (PyPI)
 
