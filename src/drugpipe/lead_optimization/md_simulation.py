@@ -154,6 +154,66 @@ def _smiles_to_3d_pdb(smiles: str) -> Optional[str]:
     return Chem.MolToPDBBlock(mol)
 
 
+def _pdbqt_to_pdb_block(pdbqt_path: str) -> Optional[str]:
+    """Extract the first MODEL from a Vina PDBQT and return a PDB-format string."""
+    lines: List[str] = []
+    with open(pdbqt_path) as fh:
+        for raw in fh:
+            if raw.startswith("ENDMDL"):
+                break
+            if raw.startswith(("ATOM", "HETATM")):
+                base = raw[:66].rstrip().ljust(76)
+                atom_name = raw[12:16].strip()
+                elem = atom_name.lstrip("0123456789")[:2].strip()
+                if len(elem) > 1:
+                    elem = elem[0].upper() + elem[1].lower()
+                else:
+                    elem = elem.upper()
+                lines.append(f"{base} {elem:>2s}")
+    if not lines:
+        return None
+    lines.append("END")
+    return "\n".join(lines) + "\n"
+
+
+def _load_docked_pose_pdb(smiles: str, pdbqt_path: str) -> Optional[str]:
+    """Build an all-atom PDB block with heavy-atom positions from the docked pose.
+
+    Parses the PDBQT to recover heavy-atom coordinates, assigns bond orders
+    from the SMILES template, adds explicit hydrogens, then does a constrained
+    embedding so H positions are physically reasonable while heavy atoms stay
+    at their docked positions.  Falls back to ``_smiles_to_3d_pdb`` on failure.
+    """
+    pdb_block = _pdbqt_to_pdb_block(pdbqt_path)
+    if pdb_block is None:
+        logger.debug("Could not parse PDBQT %s; falling back to SMILES-to-3D.", pdbqt_path)
+        return _smiles_to_3d_pdb(smiles)
+
+    ref_mol = Chem.MolFromPDBBlock(pdb_block, removeHs=True, sanitize=False)
+    if ref_mol is None:
+        logger.debug("RDKit could not parse PDB block from PDBQT; falling back.")
+        return _smiles_to_3d_pdb(smiles)
+
+    template = safe_mol(smiles)
+    if template is None:
+        return None
+
+    try:
+        ref_mol = AllChem.AssignBondOrdersFromTemplate(template, ref_mol)
+    except Exception as exc:
+        logger.debug("Bond-order assignment from template failed (%s); falling back.", exc)
+        return _smiles_to_3d_pdb(smiles)
+
+    mol = Chem.AddHs(ref_mol)
+    try:
+        AllChem.ConstrainedEmbed(mol, ref_mol, useTethers=True, randomSeed=42)
+    except Exception as exc:
+        logger.debug("ConstrainedEmbed failed (%s); falling back.", exc)
+        return _smiles_to_3d_pdb(smiles)
+
+    return Chem.MolToPDBBlock(mol)
+
+
 class MDSimulator:
     """Run short MD simulations and compute MM-GBSA binding energies."""
 
@@ -216,11 +276,19 @@ class MDSimulator:
         md_dir = out_dir / "md_trajectories"
         md_dir.mkdir(parents=True, exist_ok=True)
 
+        has_pose_col = "docking_pose_file" in df.columns
+
         for idx in candidates:
             smi = df.at[idx, "canonical_smiles"]
             logger.info("Running MM-GBSA for molecule %d: %s", idx, smi[:60])
 
-            energy, rmsd = self._simulate_one(smi, pdb_path, md_dir, idx)
+            pose_path: Optional[str] = None
+            if has_pose_col:
+                _p = df.at[idx, "docking_pose_file"]
+                if _p and str(_p) != "" and Path(str(_p)).is_file():
+                    pose_path = str(_p)
+
+            energy, rmsd = self._simulate_one(smi, pdb_path, md_dir, idx, pose_path)
             if energy is not None:
                 df.at[idx, "md_binding_energy"] = energy
             if rmsd is not None:
@@ -245,6 +313,7 @@ class MDSimulator:
         receptor_pdb: str,
         md_dir: Path,
         mol_idx: int,
+        docking_pose_path: Optional[str] = None,
     ) -> Tuple[Optional[float], Optional[float]]:
         """Compute MM-GBSA binding energy and ligand RMSD for ranking.
 
@@ -266,7 +335,7 @@ class MDSimulator:
 
         try:
             complex_energy, pose_rmsd, md_state = self._gb_energy_complex(
-                receptor_pdb, smiles, off_mol
+                receptor_pdb, smiles, off_mol, docking_pose_path,
             )
             receptor_energy = self._gb_energy_receptor(receptor_pdb)
             ligand_energy = self._gb_energy_ligand(smiles, off_mol)
@@ -299,7 +368,11 @@ class MDSimulator:
 
     # ------------------------------------------------------------------
     def _gb_energy_complex(
-        self, receptor_pdb: str, ligand_smi: str, off_mol: Any,
+        self,
+        receptor_pdb: str,
+        ligand_smi: str,
+        off_mol: Any,
+        docking_pose_path: Optional[str] = None,
     ) -> Tuple[Optional[float], Optional[float], Optional[_ComplexState]]:
         """Build protein+ligand in implicit solvent, minimise.
 
@@ -307,8 +380,15 @@ class MDSimulator:
         ``state_for_md`` holds the minimised ``Simulation`` for trajectory
         continuation; pose_rmsd is heavy-atom ligand RMSD before vs after
         minimisation.
+
+        When *docking_pose_path* is provided, the ligand's heavy-atom
+        coordinates are taken from the docked PDBQT pose so that the complex
+        is physically meaningful (ligand inside the binding pocket).
         """
-        lig_pdb = _smiles_to_3d_pdb(ligand_smi)
+        if docking_pose_path:
+            lig_pdb = _load_docked_pose_pdb(ligand_smi, docking_pose_path)
+        else:
+            lig_pdb = _smiles_to_3d_pdb(ligand_smi)
         if lig_pdb is None:
             return None, None, None
 
@@ -385,7 +465,7 @@ class MDSimulator:
             return energy, pose_rmsd, md_state
 
         except Exception as exc:
-            logger.debug("Complex GB energy failed: %s", exc)
+            logger.warning("Complex GB energy failed for '%s': %s", ligand_smi[:60], exc)
             return None, None, None
 
     def _run_trajectory(self, state: _ComplexState, mol_idx: int) -> Optional[float]:
