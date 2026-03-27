@@ -1,7 +1,10 @@
 """Short molecular-dynamics simulation and MM-GBSA binding energy via OpenMM.
 
-Runs a brief MD trajectory on a protein-ligand complex, then estimates
-the binding free energy with MM-GBSA (OBC2 implicit solvent model).
+After energy minimisation of the complex, runs configurable Langevin MD
+(``equilibration_ps`` / ``production_ns``) and reports mean ligand
+heavy-atom RMSD vs the initial pose over 1-ps snapshots; MM-GBSA-style
+binding energy is from minimised receptor, ligand, and complex states
+(OBC2 implicit solvent).
 
 Required dependencies:
   - openmm              (conda install -c conda-forge openmm)
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -52,6 +56,21 @@ try:
     _MDTRAJ_OK = True
 except ImportError:
     _MDTRAJ_OK = False
+
+
+# 2 fs timestep → 500 steps per picosecond
+_MD_TIMESTEP_PS = 0.002
+_MD_STEPS_PER_PS = int(round(0.001 / _MD_TIMESTEP_PS))
+
+
+@dataclass
+class _ComplexState:
+    """OpenMM complex simulation after minimisation; used to continue with MD."""
+
+    simulation: Any
+    n_rec_atoms: int
+    lig_init_pos: np.ndarray  # Å, shape (n_lig_atoms, 3)
+    heavy_mask: np.ndarray  # bool, shape (n_lig_atoms,)
 
 
 def _validate_platform(name: str, props: Dict[str, str]) -> bool:
@@ -227,19 +246,17 @@ class MDSimulator:
         md_dir: Path,
         mol_idx: int,
     ) -> Tuple[Optional[float], Optional[float]]:
-        """Compute MM-GBSA binding energy and pose-displacement RMSD.
+        """Compute MM-GBSA binding energy and ligand RMSD for ranking.
 
         ΔG = E(complex) − E(receptor) − E(ligand).
 
-        RMSD is the heavy-atom RMSD of the ligand between its input docked
-        coordinates and the energy-minimised complex coordinates.  A small
-        value means the force field is comfortable with the docked pose; a
-        large value flags a strained or misfit binding mode.  This is a
-        fast, trajectory-free proxy for binding-pose stability that requires
-        no extra computation beyond the complex minimisation already needed
-        for MM-GBSA.
+        After minimisation, a short Langevin trajectory (``equilibration_ps``,
+        ``production_ns`` from config) yields **trajectory RMSD**: mean
+        heavy-atom RMSD of the ligand vs the initial docked pose over 1-ps
+        snapshots. If trajectory integration fails, **pose RMSD** (before /
+        after minimisation) is used instead.
 
-        Returns (binding_energy_kcal, pose_rmsd_angstrom).
+        Returns (binding_energy_kcal, rmsd_angstrom for ``md_rmsd_mean``).
         """
         try:
             off_mol = OFFMolecule.from_smiles(smiles, allow_undefined_stereo=True)
@@ -248,19 +265,27 @@ class MDSimulator:
             return None, None
 
         try:
-            complex_energy, pose_rmsd = self._gb_energy_complex(receptor_pdb, smiles, off_mol)
+            complex_energy, pose_rmsd, md_state = self._gb_energy_complex(
+                receptor_pdb, smiles, off_mol
+            )
             receptor_energy = self._gb_energy_receptor(receptor_pdb)
             ligand_energy = self._gb_energy_ligand(smiles, off_mol)
 
             if all(e is not None for e in (complex_energy, receptor_energy, ligand_energy)):
                 binding = complex_energy - receptor_energy - ligand_energy
+                traj_rmsd: Optional[float] = None
+                if md_state is not None:
+                    traj_rmsd = self._run_trajectory(md_state, mol_idx)
+                final_rmsd = traj_rmsd if traj_rmsd is not None else pose_rmsd
                 logger.info(
                     "Mol %d MM-GBSA: complex=%.1f  receptor=%.1f  ligand=%.1f"
-                    "  ΔG=%.2f kcal/mol  pose_RMSD=%s Å",
+                    "  ΔG=%.2f kcal/mol  pose_RMSD=%s Å  traj_RMSD=%s Å  md_rmsd_mean=%s Å",
                     mol_idx, complex_energy, receptor_energy, ligand_energy, binding,
                     f"{pose_rmsd:.2f}" if pose_rmsd is not None else "N/A",
+                    f"{traj_rmsd:.2f}" if traj_rmsd is not None else "N/A",
+                    f"{final_rmsd:.2f}" if final_rmsd is not None else "N/A",
                 )
-                return binding, pose_rmsd
+                return binding, final_rmsd
             else:
                 logger.warning(
                     "Mol %d: incomplete energies (complex=%s, receptor=%s, ligand=%s)",
@@ -275,16 +300,17 @@ class MDSimulator:
     # ------------------------------------------------------------------
     def _gb_energy_complex(
         self, receptor_pdb: str, ligand_smi: str, off_mol: Any,
-    ) -> Tuple[Optional[float], Optional[float]]:
+    ) -> Tuple[Optional[float], Optional[float], Optional[_ComplexState]]:
         """Build protein+ligand in implicit solvent, minimise.
 
-        Returns (energy_kcal, pose_rmsd_angstrom) where pose_rmsd is the
-        heavy-atom RMSD of the ligand between its input coordinates and the
-        minimised coordinates.
+        Returns (energy_kcal, pose_rmsd_angstrom, state_for_md) where
+        ``state_for_md`` holds the minimised ``Simulation`` for trajectory
+        continuation; pose_rmsd is heavy-atom ligand RMSD before vs after
+        minimisation.
         """
         lig_pdb = _smiles_to_3d_pdb(ligand_smi)
         if lig_pdb is None:
-            return None, None
+            return None, None, None
 
         try:
             rec_pdb = app.PDBFile(receptor_pdb)
@@ -350,11 +376,82 @@ class MDSimulator:
             else:
                 pose_rmsd = None
 
-            return energy, pose_rmsd
+            md_state = _ComplexState(
+                simulation=simulation,
+                n_rec_atoms=n_rec_atoms,
+                lig_init_pos=np.asarray(lig_init_pos, dtype=np.float64).copy(),
+                heavy_mask=np.asarray(heavy_mask, dtype=bool).copy(),
+            )
+            return energy, pose_rmsd, md_state
 
         except Exception as exc:
             logger.debug("Complex GB energy failed: %s", exc)
-            return None, None
+            return None, None, None
+
+    def _run_trajectory(self, state: _ComplexState, mol_idx: int) -> Optional[float]:
+        """Equilibration + production MD; mean ligand heavy-atom RMSD vs docked pose (Å).
+
+        Uses ``equilibration_ps`` and ``production_ns`` from config; snapshots
+        every 1 ps. On failure, returns ``None`` so callers can fall back to
+        pose RMSD.
+        """
+        if not state.heavy_mask.any():
+            return None
+        try:
+            sim = state.simulation
+            sim.context.setVelocitiesToTemperature(300 * unit.kelvin)
+
+            eq_steps = max(0, int(round(self.equilibration_ps * _MD_STEPS_PER_PS)))
+            if eq_steps > 0:
+                sim.step(eq_steps)
+
+            prod_steps = max(1, int(round(self.production_ns * 1000 * _MD_STEPS_PER_PS)))
+            snapshot_every = _MD_STEPS_PER_PS
+            rmsds: List[float] = []
+
+            if prod_steps < snapshot_every:
+                sim.step(prod_steps)
+                rmsd = self._ligand_rmsd_from_simulation(sim, state)
+                if rmsd is None or not np.isfinite(rmsd):
+                    logger.warning("Mol %d: invalid RMSD during trajectory.", mol_idx)
+                    return None
+                rmsds.append(rmsd)
+            else:
+                n_full = prod_steps // snapshot_every
+                remainder = prod_steps % snapshot_every
+                for _ in range(n_full):
+                    sim.step(snapshot_every)
+                    rmsd = self._ligand_rmsd_from_simulation(sim, state)
+                    if rmsd is None or not np.isfinite(rmsd):
+                        logger.warning("Mol %d: invalid RMSD during trajectory.", mol_idx)
+                        return None
+                    rmsds.append(rmsd)
+                if remainder > 0:
+                    sim.step(remainder)
+
+            if not rmsds:
+                return None
+            return float(np.mean(rmsds))
+        except Exception as exc:
+            logger.warning(
+                "Mol %d: trajectory RMSD failed (%s); using pose RMSD if available.",
+                mol_idx,
+                exc,
+            )
+            return None
+
+    @staticmethod
+    def _ligand_rmsd_from_simulation(sim: Any, state: _ComplexState) -> Optional[float]:
+        """Heavy-atom RMSD (Å) of ligand vs initial docked coordinates."""
+        st = sim.context.getState(getPositions=True)
+        all_pos = np.array(st.getPositions().value_in_unit(unit.angstrom))
+        lig = all_pos[state.n_rec_atoms:]
+        ref = state.lig_init_pos[state.heavy_mask]
+        cur = lig[state.heavy_mask]
+        if cur.size == 0:
+            return None
+        diff = cur - ref
+        return float(np.sqrt(np.mean(np.sum(diff ** 2, axis=1))))
 
     def _gb_energy_receptor(self, receptor_pdb: str) -> Optional[float]:
         """GB energy of the receptor alone (no GAFF needed)."""
