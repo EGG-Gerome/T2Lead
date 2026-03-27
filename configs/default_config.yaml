@@ -163,5 +163,9 @@ lead_optimization:
     w_md_energy: 0.30
     w_stability: 0.15
 
+  approved_drug_check:
+    enabled: true                      # query ChEMBL to flag known approved / clinical-stage drugs
+    chembl_base_url: "https://www.ebi.ac.uk/chembl/api/data"
+
   output:
     top_n_optimized: 10

@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from drugpipe.lead_optimization.admet_deep import DeepADMET
+from drugpipe.lead_optimization.approved_drug_checker import ApprovedDrugChecker
 from drugpipe.lead_optimization.docking import VinaDocking
 from drugpipe.lead_optimization.md_simulation import MDSimulator
 from drugpipe.lead_optimization.protein_prep import ProteinPreparator
@@ -54,6 +55,7 @@ class LeadOptimizer:
         self.docker = VinaDocking(cfg)
         self.admet = DeepADMET(cfg)
         self.md_sim = MDSimulator(cfg)
+        self.drug_checker = ApprovedDrugChecker(cfg)
 
         self.output_csv = out_dir / "optimized_leads.csv"
 
@@ -159,9 +161,11 @@ class LeadOptimizer:
 
     # ------------------------------------------------------------------
     def _rank_and_output(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Sort by composite score, keep top-N, write CSV."""
+        """Sort by composite score, keep top-N, annotate approval status, write CSV."""
         df = df.sort_values("opt_score", ascending=False)
         df = df.head(self.top_n).reset_index(drop=True)
+
+        df = self.drug_checker.annotate(df)
 
         keep_cols = [
             "canonical_smiles", "origin",
@@ -170,6 +174,8 @@ class LeadOptimizer:
             "veber_pass", "admet_risk",
             "md_binding_energy", "md_rmsd_mean",
             "opt_score",
+            "is_approved", "max_phase", "pref_name",
+            "chembl_id", "chembl_url", "first_approval",
         ]
         keep_cols = [c for c in keep_cols if c in df.columns]
         df_out = df[keep_cols].copy()
