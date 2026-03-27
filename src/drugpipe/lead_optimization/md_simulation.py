@@ -227,9 +227,19 @@ class MDSimulator:
         md_dir: Path,
         mol_idx: int,
     ) -> Tuple[Optional[float], Optional[float]]:
-        """Compute MM-GBSA binding energy: ΔG = E(complex) − E(receptor) − E(ligand).
+        """Compute MM-GBSA binding energy and pose-displacement RMSD.
 
-        Returns (binding_energy_kcal, mean_rmsd_angstrom).
+        ΔG = E(complex) − E(receptor) − E(ligand).
+
+        RMSD is the heavy-atom RMSD of the ligand between its input docked
+        coordinates and the energy-minimised complex coordinates.  A small
+        value means the force field is comfortable with the docked pose; a
+        large value flags a strained or misfit binding mode.  This is a
+        fast, trajectory-free proxy for binding-pose stability that requires
+        no extra computation beyond the complex minimisation already needed
+        for MM-GBSA.
+
+        Returns (binding_energy_kcal, pose_rmsd_angstrom).
         """
         try:
             off_mol = OFFMolecule.from_smiles(smiles, allow_undefined_stereo=True)
@@ -238,17 +248,19 @@ class MDSimulator:
             return None, None
 
         try:
-            complex_energy = self._gb_energy_complex(receptor_pdb, smiles, off_mol)
+            complex_energy, pose_rmsd = self._gb_energy_complex(receptor_pdb, smiles, off_mol)
             receptor_energy = self._gb_energy_receptor(receptor_pdb)
             ligand_energy = self._gb_energy_ligand(smiles, off_mol)
 
             if all(e is not None for e in (complex_energy, receptor_energy, ligand_energy)):
                 binding = complex_energy - receptor_energy - ligand_energy
                 logger.info(
-                    "Mol %d MM-GBSA: complex=%.1f  receptor=%.1f  ligand=%.1f  ΔG=%.2f kcal/mol",
+                    "Mol %d MM-GBSA: complex=%.1f  receptor=%.1f  ligand=%.1f"
+                    "  ΔG=%.2f kcal/mol  pose_RMSD=%s Å",
                     mol_idx, complex_energy, receptor_energy, ligand_energy, binding,
+                    f"{pose_rmsd:.2f}" if pose_rmsd is not None else "N/A",
                 )
-                return binding, None
+                return binding, pose_rmsd
             else:
                 logger.warning(
                     "Mol %d: incomplete energies (complex=%s, receptor=%s, ligand=%s)",
@@ -263,11 +275,16 @@ class MDSimulator:
     # ------------------------------------------------------------------
     def _gb_energy_complex(
         self, receptor_pdb: str, ligand_smi: str, off_mol: Any,
-    ) -> Optional[float]:
-        """Build protein+ligand in implicit solvent, minimise, return energy."""
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Build protein+ligand in implicit solvent, minimise.
+
+        Returns (energy_kcal, pose_rmsd_angstrom) where pose_rmsd is the
+        heavy-atom RMSD of the ligand between its input coordinates and the
+        minimised coordinates.
+        """
         lig_pdb = _smiles_to_3d_pdb(ligand_smi)
         if lig_pdb is None:
-            return None
+            return None, None
 
         try:
             rec_pdb = app.PDBFile(receptor_pdb)
@@ -277,16 +294,67 @@ class MDSimulator:
                 tmp.write(lig_pdb)
                 tmp_path = tmp.name
             lig_pdb_obj = app.PDBFile(tmp_path)
+
+            n_rec_atoms = modeller.topology.getNumAtoms()
+            lig_init_pos = np.array(
+                lig_pdb_obj.positions.value_in_unit(unit.angstrom)
+            )
+
             modeller.add(lig_pdb_obj.topology, lig_pdb_obj.positions)
 
             gaff = GAFFTemplateGenerator(molecules=off_mol, forcefield="gaff-2.11")
             forcefield = app.ForceField("amber14-all.xml", "implicit/obc2.xml")
             forcefield.registerTemplateGenerator(gaff.generator)
 
-            return self._minimise_and_energy(forcefield, modeller)
+            system = forcefield.createSystem(
+                modeller.topology,
+                nonbondedMethod=app.NoCutoff,
+                constraints=app.HBonds,
+            )
+            integrator = openmm.LangevinMiddleIntegrator(
+                300 * unit.kelvin, 1.0 / unit.picosecond, 0.002 * unit.picoseconds,
+            )
+            platform = None
+            if self.platform:
+                try:
+                    platform = openmm.Platform.getPlatformByName(self.platform)
+                except Exception:
+                    pass
+            if platform:
+                simulation = app.Simulation(
+                    modeller.topology, system, integrator,
+                    platform, self.platform_props,
+                )
+            else:
+                simulation = app.Simulation(modeller.topology, system, integrator)
+            simulation.context.setPositions(modeller.positions)
+            simulation.minimizeEnergy(maxIterations=1000)
+
+            state = simulation.context.getState(getEnergy=True, getPositions=True)
+            energy = float(
+                state.getPotentialEnergy().value_in_unit(unit.kilocalories_per_mole)
+            )
+
+            # Heavy-atom RMSD between docked and minimised ligand positions
+            all_pos = np.array(state.getPositions().value_in_unit(unit.angstrom))
+            lig_final_pos = all_pos[n_rec_atoms:]
+            heavy_mask = np.array([
+                a.element is not None and a.element.mass > 1.5
+                for a in lig_pdb_obj.topology.atoms()
+            ])
+            if heavy_mask.any():
+                diff = lig_final_pos[heavy_mask] - lig_init_pos[heavy_mask]
+                pose_rmsd: Optional[float] = float(
+                    np.sqrt(np.mean(np.sum(diff ** 2, axis=1)))
+                )
+            else:
+                pose_rmsd = None
+
+            return energy, pose_rmsd
+
         except Exception as exc:
             logger.debug("Complex GB energy failed: %s", exc)
-            return None
+            return None, None
 
     def _gb_energy_receptor(self, receptor_pdb: str) -> Optional[float]:
         """GB energy of the receptor alone (no GAFF needed)."""
