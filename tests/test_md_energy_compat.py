@@ -1,17 +1,20 @@
-"""Regression tests for MD energy return-value type compatibility.
+"""Regression tests for MD energy/positions type compatibility.
 
-Covers the bug where ``getPotentialEnergy()`` sometimes returns a plain
-``float`` instead of an OpenMM ``Quantity``, causing
+Covers bugs where OpenMM return values (energy, positions, element.mass)
+are sometimes ``Quantity`` and sometimes plain Python types, causing
 ``'float' object has no attribute 'value_in_unit'``.
 """
 
 from __future__ import annotations
 
 import math
+import numpy as np
 import pytest
 
 from drugpipe.lead_optimization.md_simulation import (
     _energy_as_kcal,
+    _positions_as_angstrom,
+    _is_heavy_atom,
     _KJ_TO_KCAL,
     _OPENMM_OK,
 )
@@ -71,3 +74,62 @@ class TestEnergyAsKcal:
         from_quantity = _energy_as_kcal(q)
         from_float = _energy_as_kcal(kj_val)
         assert math.isclose(from_quantity, from_float, rel_tol=1e-4)
+
+
+class TestPositionsAsAngstrom:
+    """Ensure ``_positions_as_angstrom`` handles array-like and Quantity."""
+
+    def test_plain_numpy_array(self):
+        arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        result = _positions_as_angstrom(arr)
+        assert result.shape == (2, 3)
+        assert result.dtype == np.float64
+
+    def test_plain_list(self):
+        lst = [[0.1, 0.2, 0.3]]
+        result = _positions_as_angstrom(lst)
+        assert result.shape == (1, 3)
+
+    @pytest.mark.skipif(not _OPENMM_OK, reason="OpenMM not installed")
+    def test_openmm_quantity(self):
+        from openmm import Vec3
+        pos = [Vec3(1, 2, 3)] * unit.angstrom
+        result = _positions_as_angstrom(pos)
+        assert math.isclose(result[0, 0], 1.0, rel_tol=1e-6)
+
+
+class TestIsHeavyAtom:
+    """Ensure ``_is_heavy_atom`` avoids Quantity comparison pitfalls."""
+
+    def test_fake_carbon(self):
+        class FakeElem:
+            symbol = "C"
+            mass = 12.0
+        class FakeAtom:
+            element = FakeElem()
+        assert _is_heavy_atom(FakeAtom()) is True
+
+    def test_fake_hydrogen(self):
+        class FakeElem:
+            symbol = "H"
+            mass = 1.008
+        class FakeAtom:
+            element = FakeElem()
+        assert _is_heavy_atom(FakeAtom()) is False
+
+    def test_no_element(self):
+        class FakeAtom:
+            element = None
+        assert _is_heavy_atom(FakeAtom()) is False
+
+    def test_no_attribute_error_on_float_mass(self):
+        """Regression: Quantity(mass).__gt__(1.5) calls float.value_in_unit()."""
+        class FakeElem:
+            symbol = "N"
+            mass = 14.0
+        class FakeAtom:
+            element = FakeElem()
+        try:
+            _is_heavy_atom(FakeAtom())
+        except AttributeError:
+            pytest.fail("_is_heavy_atom raised AttributeError")

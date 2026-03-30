@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -88,6 +89,36 @@ def _energy_as_kcal(val) -> float:
     if hasattr(val, "value_in_unit") and _OPENMM_OK:
         return float(val.value_in_unit(unit.kilocalories_per_mole))
     return float(val) * _KJ_TO_KCAL
+
+
+def _positions_as_angstrom(pos) -> np.ndarray:
+    """Convert positions to an (N, 3) float64 numpy array in Angstroms.
+
+    Handles both OpenMM ``Quantity`` and raw array-like (assumed nm).
+    """
+    if hasattr(pos, "value_in_unit") and _OPENMM_OK:
+        return np.array(pos.value_in_unit(unit.angstrom), dtype=np.float64)
+    arr = np.array(pos, dtype=np.float64)
+    if arr.size > 0 and np.abs(arr[arr != 0]).mean() < 50:
+        arr *= 10.0
+    return arr
+
+
+def _is_heavy_atom(atom) -> bool:
+    """Return True if *atom* is heavier than hydrogen.
+
+    Avoids ``Quantity.__gt__(float)`` which fails in some OpenMM builds
+    when comparing ``element.mass`` (a Quantity in amu) against a bare float.
+    """
+    elem = atom.element
+    if elem is None:
+        return False
+    if hasattr(elem, "symbol"):
+        return elem.symbol != "H"
+    mass = elem.mass
+    if hasattr(mass, "value_in_unit"):
+        return float(mass.value_in_unit(unit.daltons)) > 1.5
+    return float(mass) > 1.5
 
 
 @dataclass
@@ -431,9 +462,7 @@ class MDSimulator:
             lig_pdb_obj = app.PDBFile(tmp_path)
 
             n_rec_atoms = modeller.topology.getNumAtoms()
-            lig_init_pos = np.array(
-                lig_pdb_obj.positions.value_in_unit(unit.angstrom)
-            )
+            lig_init_pos = _positions_as_angstrom(lig_pdb_obj.positions)
 
             modeller.add(lig_pdb_obj.topology, lig_pdb_obj.positions)
 
@@ -469,11 +498,10 @@ class MDSimulator:
             energy = _energy_as_kcal(state.getPotentialEnergy())
 
             # Heavy-atom RMSD between docked and minimised ligand positions
-            all_pos = np.array(state.getPositions().value_in_unit(unit.angstrom))
+            all_pos = _positions_as_angstrom(state.getPositions())
             lig_final_pos = all_pos[n_rec_atoms:]
             heavy_mask = np.array([
-                a.element is not None and a.element.mass > 1.5
-                for a in lig_pdb_obj.topology.atoms()
+                _is_heavy_atom(a) for a in lig_pdb_obj.topology.atoms()
             ])
             if heavy_mask.any():
                 diff = lig_final_pos[heavy_mask] - lig_init_pos[heavy_mask]
@@ -492,7 +520,10 @@ class MDSimulator:
             return energy, pose_rmsd, md_state
 
         except Exception as exc:
-            logger.warning("Complex GB energy failed for '%s': %s", ligand_smi[:60], exc)
+            logger.warning(
+                "Complex GB energy failed for '%s': %s\n%s",
+                ligand_smi[:60], exc, traceback.format_exc(),
+            )
             return None, None, None
 
     def _run_trajectory(self, state: _ComplexState, mol_idx: int) -> Optional[float]:
@@ -551,7 +582,7 @@ class MDSimulator:
     def _ligand_rmsd_from_simulation(sim: Any, state: _ComplexState) -> Optional[float]:
         """Heavy-atom RMSD (Å) of ligand vs initial docked coordinates."""
         st = sim.context.getState(getPositions=True)
-        all_pos = np.array(st.getPositions().value_in_unit(unit.angstrom))
+        all_pos = _positions_as_angstrom(st.getPositions())
         lig = all_pos[state.n_rec_atoms:]
         ref = state.lig_init_pos[state.heavy_mask]
         cur = lig[state.heavy_mask]
@@ -770,9 +801,7 @@ class ExplicitSolventRefiner:
             lig_pdb_obj = app.PDBFile(tmp_path)
 
             n_rec_atoms = modeller.topology.getNumAtoms()
-            lig_init_pos = np.array(
-                lig_pdb_obj.positions.value_in_unit(unit.angstrom)
-            )
+            lig_init_pos = _positions_as_angstrom(lig_pdb_obj.positions)
             modeller.add(lig_pdb_obj.topology, lig_pdb_obj.positions)
             n_solute_atoms = modeller.topology.getNumAtoms()
 
@@ -823,8 +852,7 @@ class ExplicitSolventRefiner:
             prod_steps = max(1, int(round(self.production_ns * 1000 * _MD_STEPS_PER_PS)))
             snapshot_every = 10 * _MD_STEPS_PER_PS
             heavy_mask = np.array([
-                a.element is not None and a.element.mass > 1.5
-                for a in lig_pdb_obj.topology.atoms()
+                _is_heavy_atom(a) for a in lig_pdb_obj.topology.atoms()
             ])
 
             rmsds: List[float] = []
@@ -837,7 +865,7 @@ class ExplicitSolventRefiner:
                 st = simulation.context.getState(getEnergy=True, getPositions=True)
                 energies.append(_energy_as_kcal(st.getPotentialEnergy()))
 
-                all_pos = np.array(st.getPositions().value_in_unit(unit.angstrom))
+                all_pos = _positions_as_angstrom(st.getPositions())
                 lig_pos = all_pos[n_rec_atoms:n_solute_atoms]
                 if heavy_mask.any() and lig_pos.shape[0] == lig_init_pos.shape[0]:
                     diff = lig_pos[heavy_mask] - lig_init_pos[heavy_mask]
