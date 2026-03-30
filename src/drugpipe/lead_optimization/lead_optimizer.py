@@ -20,7 +20,7 @@ import pandas as pd
 from drugpipe.lead_optimization.admet_deep import DeepADMET
 from drugpipe.lead_optimization.approved_drug_checker import ApprovedDrugChecker
 from drugpipe.lead_optimization.docking import VinaDocking
-from drugpipe.lead_optimization.md_simulation import MDSimulator
+from drugpipe.lead_optimization.md_simulation import ExplicitSolventRefiner, MDSimulator
 from drugpipe.lead_optimization.protein_prep import ProteinPreparator
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ class LeadOptimizer:
     2. Molecular docking    (AutoDock Vina)
     3. Enhanced ADMET       (SA score, hERG, CYP, Veber)
     4. MD simulation        (OpenMM MM-GBSA, top-N only)
+    4b. Explicit solvent MD (optional; triggered when top scores are too close)
     5. Composite scoring & ranking
     """
 
@@ -55,6 +56,7 @@ class LeadOptimizer:
         self.docker = VinaDocking(cfg)
         self.admet = DeepADMET(cfg)
         self.md_sim = MDSimulator(cfg)
+        self.explicit_refiner = ExplicitSolventRefiner(cfg)
         self.drug_checker = ApprovedDrugChecker(cfg)
 
         self.output_csv = out_dir / "optimized_leads.csv"
@@ -96,6 +98,13 @@ class LeadOptimizer:
 
         logger.info("=== Lead Optimization Step 5: Composite Scoring ===")
         df_leads = self._composite_score(df_leads)
+
+        # Step 4b — optional explicit solvent refinement
+        if protein_info and self.explicit_refiner.should_trigger(df_leads):
+            logger.info("=== Lead Optimization Step 4b: Explicit Solvent Refinement ===")
+            df_leads = self.explicit_refiner.run(df_leads, protein_info, self.out_dir)
+            df_leads = self._rescore_with_explicit(df_leads)
+
         df_out = self._rank_and_output(df_leads)
         return df_out
 
@@ -159,6 +168,34 @@ class LeadOptimizer:
             return pd.Series(0.5, index=s.index)
         return 1.0 - (filled - mn) / (mx - mn)
 
+    def _rescore_with_explicit(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Re-rank candidates that have explicit-solvent data.
+
+        For molecules with explicit MD results, replace the implicit energy /
+        RMSD in the composite score and add drift as a tie-breaker.  Molecules
+        without explicit data keep their original scores.
+        """
+        has_explicit = df["explicit_binding_energy"].notna()
+        if not has_explicit.any():
+            return df
+
+        df = df.copy()
+        df.loc[has_explicit, "md_binding_energy"] = df.loc[has_explicit, "explicit_binding_energy"]
+        df.loc[has_explicit, "md_rmsd_mean"] = df.loc[has_explicit, "explicit_rmsd_mean"]
+
+        df = self._composite_score(df)
+
+        drift = df.get("explicit_rmsd_drift")
+        if drift is not None and drift.notna().any():
+            drift_penalty = self._normalise_lower_better(drift)
+            df["opt_score"] = df["opt_score"] * 0.9 + drift_penalty * 0.1
+
+        logger.info(
+            "Re-scored %d molecules with explicit-solvent data.",
+            int(has_explicit.sum()),
+        )
+        return df
+
     # ------------------------------------------------------------------
     def _rank_and_output(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sort by composite score, keep top-N, annotate approval status, write CSV."""
@@ -173,6 +210,7 @@ class LeadOptimizer:
             "docking_score", "sa_score", "herg_flag", "cyp_risk",
             "veber_pass", "admet_risk",
             "md_binding_energy", "md_rmsd_mean",
+            "explicit_binding_energy", "explicit_rmsd_mean", "explicit_rmsd_drift",
             "opt_score",
             "is_approved", "max_phase", "pref_name",
             "chembl_id", "chembl_url", "first_approval",

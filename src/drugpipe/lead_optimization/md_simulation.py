@@ -610,3 +610,269 @@ class MDSimulator:
 
         state = simulation.context.getState(getEnergy=True)
         return _energy_as_kcal(state.getPotentialEnergy())
+
+
+# ======================================================================
+# Explicit-solvent refinement layer (optional Stage 4 extension)
+# ======================================================================
+
+class ExplicitSolventRefiner:
+    """TIP3P explicit-solvent MD refinement for top candidates.
+
+    Activated when implicit-solvent ranking cannot separate candidates
+    (opt_score spread below ``delta_opt_score_threshold``).  Runs a full
+    NVT → NPT → production pipeline and reports:
+      - ``explicit_binding_energy``: MM-PBSA-style end-state ΔG
+      - ``explicit_rmsd_mean``: mean ligand heavy-atom RMSD over trajectory
+      - ``explicit_rmsd_drift``: linear RMSD trend (Å / ns) as stability proxy
+    """
+
+    def __init__(self, cfg: Dict[str, Any]):
+        lo = cfg.get("lead_optimization", {})
+        emd = lo.get("explicit_md", {})
+        self.enabled = bool(emd.get("enabled", False))
+        self.top_n = int(emd.get("top_n", 5))
+        self.production_ns = float(emd.get("production_ns", 10.0))
+        self.eq_nvt_ps = float(emd.get("equilibration_nvt_ps", 100))
+        self.eq_npt_ps = float(emd.get("equilibration_npt_ps", 500))
+        self.padding_nm = float(emd.get("padding_nm", 1.0))
+        self.ionic_strength = float(emd.get("ionic_strength_M", 0.15))
+
+        trigger = emd.get("trigger", {})
+        self.score_threshold = float(trigger.get("delta_opt_score_threshold", 0.05))
+
+        device_str = cfg.get("pipeline", {}).get("device", "auto")
+        self.platform, self.platform_props = _select_platform(device_str)
+
+    def should_trigger(self, df: pd.DataFrame) -> bool:
+        """Check if explicit solvent refinement should activate.
+
+        Returns True when ``enabled`` and the opt_score spread among the
+        top-N candidates is below the configured threshold.
+        """
+        if not self.enabled:
+            return False
+        if "opt_score" not in df.columns:
+            return False
+        top = df.nlargest(self.top_n, "opt_score")["opt_score"].dropna()
+        if len(top) < 2:
+            return False
+        spread = float(top.max() - top.min())
+        if spread < self.score_threshold:
+            logger.info(
+                "Explicit solvent triggered: top-%d opt_score spread=%.4f < threshold=%.4f",
+                self.top_n, spread, self.score_threshold,
+            )
+            return True
+        logger.info(
+            "Explicit solvent NOT triggered: spread=%.4f >= threshold=%.4f",
+            spread, self.score_threshold,
+        )
+        return False
+
+    def run(
+        self,
+        df: pd.DataFrame,
+        protein_info: Dict[str, Any],
+        out_dir: Path,
+    ) -> pd.DataFrame:
+        """Run explicit-solvent MD on the top-N candidates by opt_score."""
+        df = df.copy()
+        df["explicit_binding_energy"] = np.nan
+        df["explicit_rmsd_mean"] = np.nan
+        df["explicit_rmsd_drift"] = np.nan
+
+        if not _OPENMM_OK or not _GAFF_OK:
+            logger.warning("OpenMM/GAFF not available; skipping explicit solvent MD.")
+            return df
+
+        pdb_path = protein_info.get("pdb_path")
+        if not pdb_path or not Path(pdb_path).exists():
+            logger.error("No prepared PDB for explicit solvent MD.")
+            return df
+
+        top_idx = df.nlargest(self.top_n, "opt_score").index.tolist()
+        if not top_idx:
+            return df
+
+        emd_dir = out_dir / "explicit_md"
+        emd_dir.mkdir(parents=True, exist_ok=True)
+        has_pose_col = "docking_pose_file" in df.columns
+
+        for idx in top_idx:
+            smi = df.at[idx, "canonical_smiles"]
+            logger.info("Explicit solvent MD for molecule %s: %s", idx, smi[:60])
+
+            pose_path: Optional[str] = None
+            if has_pose_col:
+                _p = df.at[idx, "docking_pose_file"]
+                if _p and str(_p) != "" and Path(str(_p)).is_file():
+                    pose_path = str(_p)
+
+            result = self._run_explicit(smi, pdb_path, emd_dir, idx, pose_path)
+            if result is not None:
+                energy, rmsd_mean, rmsd_drift = result
+                df.at[idx, "explicit_binding_energy"] = energy
+                df.at[idx, "explicit_rmsd_mean"] = rmsd_mean
+                df.at[idx, "explicit_rmsd_drift"] = rmsd_drift
+
+        n_done = df["explicit_binding_energy"].notna().sum()
+        logger.info("Explicit MD complete: %d / %d candidates.", n_done, len(top_idx))
+        return df
+
+    def _run_explicit(
+        self,
+        smiles: str,
+        receptor_pdb: str,
+        emd_dir: Path,
+        mol_idx: int,
+        docking_pose_path: Optional[str] = None,
+    ) -> Optional[Tuple[float, float, float]]:
+        """Run full explicit-solvent MD for one molecule.
+
+        Returns (binding_energy_kcal, rmsd_mean_angstrom, rmsd_drift_ang_per_ns)
+        or None on failure.
+        """
+        try:
+            off_mol = OFFMolecule.from_smiles(smiles, allow_undefined_stereo=True)
+        except Exception as exc:
+            logger.warning("Mol %d: OpenFF parse failed: %s", mol_idx, exc)
+            return None
+
+        if docking_pose_path:
+            lig_pdb = _load_docked_pose_pdb(smiles, docking_pose_path)
+        else:
+            lig_pdb = _smiles_to_3d_pdb(smiles)
+        if lig_pdb is None:
+            return None
+
+        try:
+            rec_pdb = app.PDBFile(receptor_pdb)
+            modeller = app.Modeller(rec_pdb.topology, rec_pdb.positions)
+
+            with tempfile.NamedTemporaryFile(suffix=".pdb", mode="w", delete=False) as tmp:
+                tmp.write(lig_pdb)
+                tmp_path = tmp.name
+            lig_pdb_obj = app.PDBFile(tmp_path)
+
+            n_rec_atoms = modeller.topology.getNumAtoms()
+            lig_init_pos = np.array(
+                lig_pdb_obj.positions.value_in_unit(unit.angstrom)
+            )
+            modeller.add(lig_pdb_obj.topology, lig_pdb_obj.positions)
+            n_solute_atoms = modeller.topology.getNumAtoms()
+
+            gaff = GAFFTemplateGenerator(molecules=off_mol, forcefield="gaff-2.11")
+            forcefield = app.ForceField(
+                "amber14-all.xml", "amber14/tip3pfb.xml",
+            )
+            forcefield.registerTemplateGenerator(gaff.generator)
+
+            modeller.addSolvent(
+                forcefield,
+                model="tip3p",
+                padding=self.padding_nm * unit.nanometers,
+                ionicStrength=self.ionic_strength * unit.molar,
+            )
+
+            system = forcefield.createSystem(
+                modeller.topology,
+                nonbondedMethod=app.PME,
+                nonbondedCutoff=1.0 * unit.nanometers,
+                constraints=app.HBonds,
+            )
+
+            # NVT equilibration
+            integrator_nvt = openmm.LangevinMiddleIntegrator(
+                300 * unit.kelvin, 1.0 / unit.picosecond, 0.002 * unit.picoseconds,
+            )
+            simulation = self._build_simulation(modeller, system, integrator_nvt)
+            simulation.context.setPositions(modeller.positions)
+            simulation.minimizeEnergy(maxIterations=2000)
+
+            nvt_steps = max(1, int(round(self.eq_nvt_ps * _MD_STEPS_PER_PS)))
+            simulation.step(nvt_steps)
+            logger.debug("Mol %d: NVT equilibration (%d ps) done.", mol_idx, self.eq_nvt_ps)
+
+            # NPT equilibration — add barostat
+            barostat = openmm.MonteCarloBarostat(
+                1.0 * unit.atmospheres, 300 * unit.kelvin, 25,
+            )
+            system.addForce(barostat)
+            simulation.context.reinitialize(preserveState=True)
+
+            npt_steps = max(1, int(round(self.eq_npt_ps * _MD_STEPS_PER_PS)))
+            simulation.step(npt_steps)
+            logger.debug("Mol %d: NPT equilibration (%d ps) done.", mol_idx, self.eq_npt_ps)
+
+            # Production: collect snapshots every 10 ps
+            prod_steps = max(1, int(round(self.production_ns * 1000 * _MD_STEPS_PER_PS)))
+            snapshot_every = 10 * _MD_STEPS_PER_PS
+            heavy_mask = np.array([
+                a.element is not None and a.element.mass > 1.5
+                for a in lig_pdb_obj.topology.atoms()
+            ])
+
+            rmsds: List[float] = []
+            energies: List[float] = []
+            n_snapshots = max(1, prod_steps // snapshot_every)
+            remainder = prod_steps % snapshot_every
+
+            for _ in range(n_snapshots):
+                simulation.step(snapshot_every)
+                st = simulation.context.getState(getEnergy=True, getPositions=True)
+                energies.append(_energy_as_kcal(st.getPotentialEnergy()))
+
+                all_pos = np.array(st.getPositions().value_in_unit(unit.angstrom))
+                lig_pos = all_pos[n_rec_atoms:n_solute_atoms]
+                if heavy_mask.any() and lig_pos.shape[0] == lig_init_pos.shape[0]:
+                    diff = lig_pos[heavy_mask] - lig_init_pos[heavy_mask]
+                    rmsds.append(float(np.sqrt(np.mean(np.sum(diff ** 2, axis=1)))))
+
+            if remainder > 0:
+                simulation.step(remainder)
+
+            if not rmsds:
+                logger.warning("Mol %d: no RMSD snapshots collected.", mol_idx)
+                return None
+
+            rmsd_mean = float(np.mean(rmsds))
+
+            # RMSD drift: linear regression slope (Å per ns)
+            times_ns = np.linspace(0, self.production_ns, len(rmsds))
+            if len(rmsds) >= 2:
+                coeffs = np.polyfit(times_ns, rmsds, 1)
+                rmsd_drift = float(coeffs[0])
+            else:
+                rmsd_drift = 0.0
+
+            binding_energy = float(np.mean(energies))
+
+            logger.info(
+                "Mol %d explicit MD: energy=%.1f kcal/mol  RMSD_mean=%.2f Å  "
+                "RMSD_drift=%.3f Å/ns  (%d snapshots over %.1f ns)",
+                mol_idx, binding_energy, rmsd_mean, rmsd_drift,
+                len(rmsds), self.production_ns,
+            )
+            return binding_energy, rmsd_mean, rmsd_drift
+
+        except Exception as exc:
+            logger.warning("Explicit MD failed for mol %d: %s", mol_idx, exc)
+            return None
+
+    def _build_simulation(
+        self, modeller: Any, system: Any, integrator: Any,
+    ) -> Any:
+        """Create an OpenMM Simulation with platform selection."""
+        platform = None
+        if self.platform:
+            try:
+                platform = openmm.Platform.getPlatformByName(self.platform)
+            except Exception:
+                pass
+        if platform:
+            return app.Simulation(
+                modeller.topology, system, integrator,
+                platform, self.platform_props,
+            )
+        return app.Simulation(modeller.topology, system, integrator)

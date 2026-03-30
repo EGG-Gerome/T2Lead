@@ -157,6 +157,17 @@ lead_optimization:
     production_ns: 1.0
     gb_model: "OBC2"                 # OBC1, OBC2, GBn, GBn2
 
+  explicit_md:
+    enabled: false                   # optional explicit-solvent refinement (TIP3P + PME)
+    top_n: 5                         # refine top-N from implicit solvent ranking
+    production_ns: 10.0              # 10 ns explicit-solvent production MD
+    equilibration_nvt_ps: 100        # NVT equilibration before NPT
+    equilibration_npt_ps: 500        # NPT equilibration before production
+    padding_nm: 1.0                  # water box padding around solute
+    ionic_strength_M: 0.15           # NaCl concentration for charge neutralisation
+    trigger:
+      delta_opt_score_threshold: 0.05  # if top-N opt_score spread < this, auto-trigger
+
   scoring:
     w_docking: 0.35
     w_admet: 0.20
