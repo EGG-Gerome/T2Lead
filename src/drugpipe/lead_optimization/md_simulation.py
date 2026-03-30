@@ -29,10 +29,22 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from rdkit import Chem
-from rdkit.Chem import AllChem
+try:
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+    _RDKIT_OK = True
+except ImportError:
+    Chem = None  # type: ignore[assignment]
+    AllChem = None  # type: ignore[assignment]
+    _RDKIT_OK = False
 
-from drugpipe.utils.chem import safe_mol
+try:
+    from drugpipe.utils.chem import safe_mol
+    _CHEM_OK = True
+except ImportError:
+    _CHEM_OK = False
+    def safe_mol(smiles: str):  # type: ignore[misc]
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +166,8 @@ def _select_platform(device: str) -> Tuple[Optional[str], Dict[str, str]]:
 
 def _smiles_to_3d_pdb(smiles: str) -> Optional[str]:
     """Generate a 3D PDB block from a SMILES string."""
+    if not _RDKIT_OK:
+        return None
     mol = safe_mol(smiles)
     if mol is None:
         return None

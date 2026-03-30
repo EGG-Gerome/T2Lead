@@ -418,6 +418,134 @@ export DP_LEAD_OPTIMIZATION__PDB_ID=4JPS
 
 所有可选依赖均优雅降级——未安装时跳过对应步骤并输出警告。
 
+## 体细胞变异流水线（nf-core/sarek）
+
+T2Lead 可接收肿瘤/正常配对的体细胞变异调用结果，将突变蛋白结构直接输送至阶段四的对接与 MD。上游变异检测由 **nf-core/sarek 3.8.1**（Nextflow + Docker）完成，产出 VEP 注释的 VCF，再由 `variant_analysis` 模块解析。
+
+### 流程概览
+
+```
+肿瘤 FASTQ ──┐
+             ├─→ [nf-core/sarek] ──→ VEP 注释 VCF
+正常 FASTQ ──┘  (BWA-MEM2 → GATK Mutect2 → VEP 115)
+                                          │
+                    T2Lead variant_analysis 模块
+                    (vcf_parser → mutant_sequence → structure_bridge)
+                                          │
+                              阶段四：对接 + MD
+                          （突变结构来自 ESMFold / FoldX）
+```
+
+### 前提条件
+
+- **Docker**（HPC 环境可使用 Singularity/Apptainer）——nf-core/sarek 自动拉取容器镜像
+- **Java 21+**——Nextflow 依赖（`java -version` 确认）
+- **最低配置**：WES 需 16 核 / 32 GB RAM；WGS 30× 需 32 核 / 64 GB
+
+### 安装 Nextflow 与 Sarek
+
+```bash
+# 安装 Nextflow 到 ~/.local/bin（需要 Java 21+）
+make install-nextflow
+
+# 拉取 nf-core/sarek 3.8.1 容器（Docker 需处于运行状态）
+make install-sarek
+
+# 或手动安装：
+curl -fsSL https://get.nextflow.io | bash
+mv nextflow ~/.local/bin/
+nextflow pull nf-core/sarek -r 3.8.1
+```
+
+### 运行体细胞变异检测
+
+准备 **samplesheet.csv**（肿瘤/正常配对）：
+
+```csv
+patient,sex,status,sample,lane,fastq_1,fastq_2
+patient1,XX,1,tumor_S1,lane_1,/data/tumor_R1.fastq.gz,/data/tumor_R2.fastq.gz
+patient1,XX,0,normal_S1,lane_1,/data/normal_R1.fastq.gz,/data/normal_R2.fastq.gz
+```
+
+然后运行：
+
+```bash
+# 通过 Makefile（Docker profile，GRCh38，Mutect2 + VEP 注释）
+make run-sarek INPUT=samplesheet.csv
+
+# 或直接调用 Nextflow：
+nextflow run nf-core/sarek \
+  -r 3.8.1 \
+  -profile docker \
+  --input samplesheet.csv \
+  --genome GRCh38 \
+  --tools mutect2,vep \
+  --outdir results/sarek
+```
+
+覆盖默认值示例：`make run-sarek INPUT=samplesheet.csv SAREK_PROFILE=singularity SAREK_GENOME=GRCh37`
+
+### 与 T2Lead 的对接
+
+Sarek 完成后，将注释好的 VCF 传入 T2Lead `variant_analysis` 模块（阶段零）：
+
+```python
+from drugpipe.variant_analysis.vcf_parser import VCFParser
+from drugpipe.variant_analysis.mutant_sequence import MutantSequenceBuilder
+
+# 解析 VEP 注释 VCF → 驱动基因错义突变
+variants = VCFParser(driver_genes=["EGFR", "PIK3CA", "BRAF"]).parse(
+    "results/sarek/annotation/sample/sample.ann.vcf"
+)
+
+# 构建突变蛋白序列 → FASTA（供 ESMFold 使用）
+proteins = MutantSequenceBuilder().build(variants)
+```
+
+突变蛋白结构（通过 ESMFold 或 FoldX 预测）随后直接输入阶段四的对接与 MD。详细可行性分析与工具全景请参阅 [`docs/research/somatic_variant_pipeline_feasibility_zh.md`](docs/research/somatic_variant_pipeline_feasibility_zh.md)（[英文版](docs/research/somatic_variant_pipeline_feasibility.md)）。
+
+### 运行时估算（WES ~100×，16 核）
+
+| 步骤 | 工具 | 耗时估算 |
+|------|------|---------|
+| 序列比对 | BWA-MEM2 | ~30–45 分钟/样本 |
+| 排序 + 去重 | SAMtools | ~15–20 分钟/样本 |
+| 体细胞变异检测 | GATK Mutect2 | ~2–4 小时 |
+| 变异注释 | VEP 115 | ~10–20 分钟 |
+| **上游合计** | | **~4–6 小时** |
+| ESMFold（每个蛋白） | ESM-2 | ~30 秒–2 分钟（GPU） |
+| 对接 + MD | Vina + OpenMM | 见阶段四 |
+
+---
+
+## 测试
+
+运行测试套件（无需 GPU 或 conda，最小 pip 安装即可）：
+
+```bash
+# 通过 Makefile
+make test
+
+# 或直接运行
+python -m pytest tests/ -v
+```
+
+### 测试文件说明
+
+| 文件 | 测试内容 | 关键依赖 |
+|------|---------|---------|
+| `tests/test_explicit_md.py` | `ExplicitSolventRefiner.should_trigger()` — 根据 top-N 候选的 opt\_score 离散度决定是否激活 TIP3P 显式溶剂 MD 精化 | `pandas`、`numpy`（不需要 RDKit、OpenMM） |
+| `tests/test_md_energy_compat.py` | `_energy_as_kcal()` — 将 OpenMM `Quantity` 对象或原始浮点数转换为 kcal/mol；针对 `float 对象没有 value_in_unit 属性` bug 的回归测试 | `pytest`；OpenMM 测试在未安装时自动跳过 |
+| `tests/test_variant_analysis.py` | VCF 解析器（VEP 注释 VCF → `SomaticVariant`）、氨基酸三字母→单字母转换、使用模拟 UniProt 请求构建突变序列、FASTA 输出 | 仅需 `pytest`，无需任何化学库 |
+
+所有测试无需 conda/RDKit/OpenMM 栈即可通过：
+
+```
+25 passed, 3 skipped   ← 3 个 OpenMM 专属测试在未安装 OpenMM 时自动跳过
+```
+
+---
+
 ## 致谢与参考
 
 | 阶段 | 参考项目 | 我们借鉴/学习了什么 |

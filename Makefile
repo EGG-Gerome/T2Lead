@@ -1,6 +1,9 @@
 .PHONY: help install install-conda-stack install-pip-stack install-torch \
 	install-crem-db install-reinvent4-full install-env \
-	install-reinvent4 download-reinvent4-prior run run-docking clean clean-all clean-logs
+	install-reinvent4 download-reinvent4-prior \
+	install-nextflow install-sarek \
+	run run-docking run-sarek \
+	test clean clean-all clean-logs
 
 # Default /bin/sh often lacks conda on PATH (non-login, no profile). Use bash -l so
 # system profile (~/.profile, /etc/profile) runs; prepend conda bin as fallback.
@@ -21,6 +24,12 @@ TORCH_INDEX_URL ?= https://download.pytorch.org/whl/cu124
 REINVENT4_DIR ?= $(CURDIR)/REINVENT4
 REINVENT4_PRIOR_URL ?= https://zenodo.org/api/records/15641297/files/reinvent.prior/content
 CREM_DB_FILE ?= $(CURDIR)/data/crem_db/chembl33_sa25_f5.db
+# Nextflow / nf-core/sarek (somatic variant calling upstream)
+NEXTFLOW_VERSION ?= 25.10.2
+NEXTFLOW_BIN     ?= $(HOME)/.local/bin/nextflow
+SAREK_VERSION    ?= 3.8.1
+SAREK_PROFILE    ?= docker
+SAREK_GENOME     ?= GRCh38
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -81,6 +90,39 @@ download-reinvent4-prior:  ## (Partial) Download prior into REINVENT4_DIR/priors
 	mkdir -p "$(REINVENT4_DIR)/priors"
 	curl -L "$(REINVENT4_PRIOR_URL)" -o "$(REINVENT4_DIR)/priors/reinvent.prior"
 	@echo "Downloaded: $(REINVENT4_DIR)/priors/reinvent.prior"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Somatic Variant Pipeline: Nextflow + nf-core/sarek
+# Requires: Docker (or Singularity), Java 21+
+# ──────────────────────────────────────────────────────────────────────────────
+
+install-nextflow:  ## Install Nextflow ≥ 25.10.2 to NEXTFLOW_BIN (default ~/.local/bin/nextflow)
+	@echo "Installing Nextflow $(NEXTFLOW_VERSION) ..."
+	mkdir -p "$(dir $(NEXTFLOW_BIN))"
+	curl -fsSL https://get.nextflow.io | bash
+	mv nextflow "$(NEXTFLOW_BIN)"
+	chmod +x "$(NEXTFLOW_BIN)"
+	@echo "Nextflow installed at $(NEXTFLOW_BIN)"
+	@"$(NEXTFLOW_BIN)" -version
+
+install-sarek: install-nextflow  ## Pull nf-core/sarek $(SAREK_VERSION) containers (Docker must be running)
+	@echo "Pulling nf-core/sarek $(SAREK_VERSION) with profile=$(SAREK_PROFILE) ..."
+	"$(NEXTFLOW_BIN)" pull nf-core/sarek -r $(SAREK_VERSION)
+	@echo "nf-core/sarek $(SAREK_VERSION) is ready."
+	@echo "Run: make run-sarek INPUT=samplesheet.csv"
+
+run-sarek:  ## Run nf-core/sarek somatic variant calling (requires INPUT=samplesheet.csv)
+	@test -n "$(strip $(INPUT))" || { echo "ERROR: set INPUT to a samplesheet CSV, e.g. make run-sarek INPUT=samplesheet.csv" >&2; exit 1; }
+	"$(NEXTFLOW_BIN)" run nf-core/sarek \
+		-r $(SAREK_VERSION) \
+		-profile $(SAREK_PROFILE) \
+		--input "$(INPUT)" \
+		--genome $(SAREK_GENOME) \
+		--tools mutect2,vep \
+		--outdir results/sarek
+
+test:  ## Run unit tests (pytest; no GPU or conda required)
+	python -m pytest tests/ -v
 
 run:  ## Run full pipeline (set DISEASE="lung cancer" to override)
 	$(PYTHON) scripts/run_pipeline.py --disease "$(DISEASE)" -v

@@ -418,6 +418,134 @@ All outputs go to `data/<disease>/` (configurable via `pipeline.out_dir`):
 
 All optional dependencies degrade gracefully — if not installed, the corresponding step is skipped with a warning.
 
+## Somatic Variant Pipeline (nf-core/sarek)
+
+T2Lead can consume tumor/normal somatic variant calls and route mutant protein structures directly into Stage 4 docking and MD. The upstream variant calling is handled by **nf-core/sarek 3.8.1** (Nextflow + Docker), producing VEP-annotated VCFs that the `variant_analysis` module parses.
+
+### Overview
+
+```
+Tumor FASTQ ──┐
+              ├─→ [nf-core/sarek] ──→ VEP-annotated VCF
+Normal FASTQ ─┘  (BWA-MEM2 → GATK Mutect2 → VEP 115)
+                                             │
+                        T2Lead variant_analysis module
+                        (vcf_parser → mutant_sequence → structure_bridge)
+                                             │
+                                    Stage 4: Docking + MD
+                                 (mutant structure from ESMFold / FoldX)
+```
+
+### Prerequisites
+
+- **Docker** (or Singularity/Apptainer for HPC) — nf-core/sarek pulls containers automatically
+- **Java 21+** — required by Nextflow (`java -version`)
+- **16 cores / 32 GB RAM** minimum for WES; 32 cores / 64 GB for WGS 30×
+
+### Install Nextflow + Sarek
+
+```bash
+# Install Nextflow to ~/.local/bin (requires Java 21+)
+make install-nextflow
+
+# Pull nf-core/sarek 3.8.1 containers (Docker must be running)
+make install-sarek
+
+# Or manually:
+curl -fsSL https://get.nextflow.io | bash
+mv nextflow ~/.local/bin/
+nextflow pull nf-core/sarek -r 3.8.1
+```
+
+### Run Somatic Variant Calling
+
+Prepare a **samplesheet.csv** (tumor/normal paired):
+
+```csv
+patient,sex,status,sample,lane,fastq_1,fastq_2
+patient1,XX,1,tumor_S1,lane_1,/data/tumor_R1.fastq.gz,/data/tumor_R2.fastq.gz
+patient1,XX,0,normal_S1,lane_1,/data/normal_R1.fastq.gz,/data/normal_R2.fastq.gz
+```
+
+Then run:
+
+```bash
+# Via Makefile (Docker profile, GRCh38, Mutect2 + VEP annotation)
+make run-sarek INPUT=samplesheet.csv
+
+# Or directly:
+nextflow run nf-core/sarek \
+  -r 3.8.1 \
+  -profile docker \
+  --input samplesheet.csv \
+  --genome GRCh38 \
+  --tools mutect2,vep \
+  --outdir results/sarek
+```
+
+Override defaults: `make run-sarek INPUT=samplesheet.csv SAREK_PROFILE=singularity SAREK_GENOME=GRCh37`
+
+### Handoff to T2Lead
+
+After Sarek completes, pass the annotated VCF to T2Lead's `variant_analysis` module (Stage 0):
+
+```python
+from drugpipe.variant_analysis.vcf_parser import VCFParser
+from drugpipe.variant_analysis.mutant_sequence import MutantSequenceBuilder
+
+# Parse VEP-annotated VCF → driver missense mutations
+variants = VCFParser(driver_genes=["EGFR", "PIK3CA", "BRAF"]).parse(
+    "results/sarek/annotation/sample/sample.ann.vcf"
+)
+
+# Build mutant protein sequences → FASTA for ESMFold
+proteins = MutantSequenceBuilder().build(variants)
+```
+
+The mutant protein structure (via ESMFold or FoldX) then feeds directly into Stage 4 docking and MD. See [`docs/research/somatic_variant_pipeline_feasibility.md`](docs/research/somatic_variant_pipeline_feasibility.md) ([中文版](docs/research/somatic_variant_pipeline_feasibility_zh.md)) for a full feasibility analysis and tool landscape.
+
+### Runtime Estimates (WES ~100×, 16 cores)
+
+| Step | Tool | Wall Time |
+|------|------|-----------|
+| Alignment | BWA-MEM2 | ~30–45 min per sample |
+| Sort + Dedup | SAMtools | ~15–20 min per sample |
+| Somatic calling | GATK Mutect2 | ~2–4 hours |
+| Annotation | VEP 115 | ~10–20 min |
+| **Total upstream** | | **~4–6 hours** |
+| ESMFold (per protein) | ESM-2 | ~30 s–2 min (GPU) |
+| Docking + MD | Vina + OpenMM | as per Stage 4 |
+
+---
+
+## Testing
+
+Run the test suite (no GPU, no conda required — works with a minimal pip install):
+
+```bash
+# Via Makefile
+make test
+
+# Or directly
+python -m pytest tests/ -v
+```
+
+### Test Files
+
+| File | What it tests | Key dependencies |
+|------|---------------|------------------|
+| `tests/test_explicit_md.py` | `ExplicitSolventRefiner.should_trigger()` — decision logic for activating TIP3P explicit-solvent MD refinement based on opt\_score spread among top-N candidates | `pandas`, `numpy` (no RDKit, no OpenMM) |
+| `tests/test_md_energy_compat.py` | `_energy_as_kcal()` — converts OpenMM `Quantity` objects **or** plain floats to kcal/mol; regression test for the `float has no attribute value_in_unit` bug | `pytest`; OpenMM tests auto-skipped when not installed |
+| `tests/test_variant_analysis.py` | VCF parser (VEP-annotated VCF → `SomaticVariant`), amino acid 3-letter→1-letter conversion, mutant sequence building with mocked UniProt fetch, FASTA output | `pytest` only; no chemistry libraries needed |
+
+All tests pass without the conda/RDKit/OpenMM stack:
+
+```
+25 passed, 3 skipped   ← 3 OpenMM-only tests auto-skipped when OpenMM is absent
+```
+
+---
+
 ## Acknowledgements & References
 
 | Stage | Reference project | What we learned / borrowed |
