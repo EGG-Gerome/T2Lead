@@ -62,6 +62,21 @@ except ImportError:
 _MD_TIMESTEP_PS = 0.002
 _MD_STEPS_PER_PS = int(round(0.001 / _MD_TIMESTEP_PS))
 
+# kJ/mol → kcal/mol conversion factor
+_KJ_TO_KCAL = 1.0 / 4.184
+
+
+def _energy_as_kcal(val) -> float:
+    """Convert potential energy to kcal/mol float.
+
+    Handles both OpenMM ``Quantity`` objects and raw ``float`` values.
+    When the value lacks ``value_in_unit`` (already a plain number),
+    it is assumed to be in kJ/mol — OpenMM's native energy unit.
+    """
+    if hasattr(val, "value_in_unit") and _OPENMM_OK:
+        return float(val.value_in_unit(unit.kilocalories_per_mole))
+    return float(val) * _KJ_TO_KCAL
+
 
 @dataclass
 class _ComplexState:
@@ -437,9 +452,7 @@ class MDSimulator:
             simulation.minimizeEnergy(maxIterations=1000)
 
             state = simulation.context.getState(getEnergy=True, getPositions=True)
-            energy = float(
-                state.getPotentialEnergy().value_in_unit(unit.kilocalories_per_mole)
-            )
+            energy = _energy_as_kcal(state.getPotentialEnergy())
 
             # Heavy-atom RMSD between docked and minimised ligand positions
             all_pos = np.array(state.getPositions().value_in_unit(unit.angstrom))
@@ -596,4 +609,4 @@ class MDSimulator:
         simulation.minimizeEnergy(maxIterations=max_iter)
 
         state = simulation.context.getState(getEnergy=True)
-        return float(state.getPotentialEnergy().value_in_unit(unit.kilocalories_per_mole))
+        return _energy_as_kcal(state.getPotentialEnergy())
