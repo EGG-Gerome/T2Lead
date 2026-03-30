@@ -290,6 +290,63 @@ def _disease_slug(disease: str) -> str:
     return slug or "default"
 
 
+def _run_variant_analysis(cfg: Dict[str, Any], out_dir: Path) -> List[Dict[str, Any]]:
+    """Execute the variant-analysis pathway: VCF parsing → mutant sequences → structures.
+
+    Returns a list of structure records (gene, mutation, pdb_path, method).
+    """
+    from drugpipe.variant_analysis.vcf_parser import VCFParser
+    from drugpipe.variant_analysis.mutant_sequence import MutantSequenceBuilder
+    from drugpipe.variant_analysis.structure_bridge import StructureBridge
+
+    va_cfg = cfg.get("variant_analysis", {})
+    vcf_path = va_cfg.get("vcf_path", "")
+
+    if not vcf_path:
+        from drugpipe.variant_analysis.sarek_runner import SarekRunner
+        runner = SarekRunner(cfg)
+        t_r1 = va_cfg.get("tumor_fastq_r1", "")
+        t_r2 = va_cfg.get("tumor_fastq_r2", "")
+        n_r1 = va_cfg.get("normal_fastq_r1", "")
+        n_r2 = va_cfg.get("normal_fastq_r2", "")
+        if all([t_r1, t_r2, n_r1, n_r2]):
+            logger.info("Running nf-core/sarek for somatic variant calling...")
+            vcf_result = runner.run(t_r1, t_r2, n_r1, n_r2, out_dir / "variant_calling")
+            if vcf_result:
+                vcf_path = str(vcf_result)
+            else:
+                logger.error("Sarek variant calling failed.")
+                return []
+        else:
+            logger.error("variant_analysis enabled but no VCF or FASTQs provided.")
+            return []
+
+    va_dir = out_dir / "variant_analysis"
+    va_dir.mkdir(parents=True, exist_ok=True)
+
+    parser = VCFParser(cfg)
+    variants = parser.parse(vcf_path)
+    if not variants:
+        logger.warning("No protein-altering variants found in %s", vcf_path)
+        return []
+
+    for v in variants:
+        logger.info("  Variant: %s", v.short_label)
+
+    builder = MutantSequenceBuilder(cfg)
+    mutants = builder.build(variants)
+    if not mutants:
+        logger.warning("Could not build any mutant sequences.")
+        return []
+
+    fasta_dir = va_dir / "mutant_fastas"
+    builder.write_fastas(mutants, fasta_dir)
+
+    bridge = StructureBridge(cfg)
+    structures = bridge.resolve_structures(mutants, va_dir / "structures")
+    return structures
+
+
 def run_pipeline(cfg: Dict[str, Any]) -> None:
     """Execute stages listed in `pipeline.stages` with shared state handoff.
     按 `pipeline.stages` 顺序执行各阶段，并在阶段间传递中间结果。
@@ -315,6 +372,31 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
     df_leads: Optional[pd.DataFrame] = None
     trainer = None
     featurizer = None
+
+    # Variant-driven path: if VCF/FASTQs provided, bypass Stages 1–3
+    va_cfg = cfg.get("variant_analysis", {})
+    if va_cfg.get("enabled", False):
+        logger.info("=" * 60)
+        logger.info("VARIANT ANALYSIS: Somatic mutation-driven pathway")
+        logger.info("=" * 60)
+        mutant_structures = _run_variant_analysis(cfg, run_out_dir)
+        if mutant_structures:
+            logger.info("Variant analysis produced %d mutant structures.", len(mutant_structures))
+            if "lead_optimization" in stages:
+                for ms in mutant_structures:
+                    logger.info(
+                        "Running Stage 4 against %s %s (%s)",
+                        ms["gene"], ms["mutation"], ms["method"],
+                    )
+                    cfg_mut = _override_out_dir(cfg, run_out_dir)
+                    lo = cfg_mut.setdefault("lead_optimization", {})
+                    lo["pdb_id"] = ""
+                    lo["protein_sequence"] = ""
+                    lo["_mutant_pdb_path"] = ms["pdb_path"]
+            logger.info("=" * 60)
+            logger.info("VARIANT-DRIVEN PIPELINE COMPLETE")
+            logger.info("=" * 60)
+            return
 
     # Stage 1
     all_targets: List[Dict[str, Any]] = []

@@ -15,6 +15,32 @@ pipeline:
   device: auto                       # auto | cuda | mps | cpu (for MLP training + OpenMM MD)
 
 # -------------------------------------------------------------------
+# Variant Analysis — optional tumor/normal somatic mutation bridge
+# -------------------------------------------------------------------
+# When a VCF (or FASTQs) is provided, the pipeline extracts protein-
+# altering mutations, builds mutant structures, and routes directly
+# to Stage 4 for compound screening against the mutant protein.
+variant_analysis:
+  enabled: false
+  vcf_path: ""                       # pre-annotated VEP VCF; skip Sarek if provided
+  tumor_fastq_r1: ""                 # paired FASTQ for Sarek; ignored if vcf_path set
+  tumor_fastq_r2: ""
+  normal_fastq_r1: ""
+  normal_fastq_r2: ""
+  driver_genes: []                   # restrict to specific genes (empty = all)
+  min_impact: "MODERATE"             # VEP IMPACT filter: HIGH, MODERATE, LOW
+  prefer_experimental_structure: true
+  api_timeout_s: 30
+
+  sarek:
+    version: "3.8.1"
+    genome: "GATK.GRCh38"
+    profile: "docker"                # docker | singularity | conda
+    max_cpus: 16
+    max_memory: "32.GB"
+    extra_args: ""
+
+# -------------------------------------------------------------------
 # Stage 1 — Target Discovery
 # -------------------------------------------------------------------
 target_discovery:
