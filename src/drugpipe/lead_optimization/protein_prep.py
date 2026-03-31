@@ -16,6 +16,7 @@ Optional dependencies:
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -56,6 +57,7 @@ class ProteinPreparator:
         lo = cfg.get("lead_optimization", {})
         self.pdb_id = (lo.get("pdb_id", "") or "").strip().upper()
         self.protein_sequence = (lo.get("protein_sequence", "") or "").strip()
+        self.mutant_pdb_path = str(lo.get("_mutant_pdb_path", "") or "").strip()
         bs = lo.get("binding_site", {})
         self.auto_detect = bool(bs.get("auto_detect", True))
         self._cfg_center: List[float] = bs.get("center", [0.0, 0.0, 0.0])
@@ -68,11 +70,19 @@ class ProteinPreparator:
         Returns a dict with paths and binding-site geometry, or None on
         failure / missing PDB ID.
         """
-        if not self.pdb_id and not self.protein_sequence:
+        if self.mutant_pdb_path and Path(self.mutant_pdb_path).is_file():
+            src = Path(self.mutant_pdb_path)
+            self.pdb_id = src.stem.replace(" ", "_")[:40]
+            dest = out_dir / src.name
+            if not dest.exists():
+                shutil.copy2(src, dest)
+            pdb_path = dest
+            logger.info("Using variant / mutant structure: %s", pdb_path)
+        elif not self.pdb_id and not self.protein_sequence:
             logger.warning("No pdb_id or protein_sequence configured — skipping protein preparation.")
             return None
-
-        pdb_path = self._fetch_pdb(out_dir)
+        else:
+            pdb_path = self._fetch_pdb(out_dir)
         if pdb_path is None:
             return None
 

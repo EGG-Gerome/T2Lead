@@ -47,10 +47,10 @@ class LeadOptimizer:
         self.top_n = int(lo.get("output", {}).get("top_n_optimized", 10))
 
         sc = lo.get("scoring", {})
-        self.w_docking = float(sc.get("w_docking", 0.35))
-        self.w_admet = float(sc.get("w_admet", 0.20))
-        self.w_md = float(sc.get("w_md_energy", 0.30))
-        self.w_stability = float(sc.get("w_stability", 0.15))
+        self.w_docking = float(sc.get("w_docking", 0.25))
+        self.w_md = float(sc.get("w_md_energy", 0.40))
+        self.w_stability = float(sc.get("w_stability", 0.35))
+        self.w_cyp_soft = float(sc.get("w_cyp_soft", 0.08))
 
         self.protein_prep = ProteinPreparator(cfg)
         self.docker = VinaDocking(cfg)
@@ -87,6 +87,10 @@ class LeadOptimizer:
 
         logger.info("=== Lead Optimization Step 3: Enhanced ADMET ===")
         df_leads = self.admet.profile(df_leads)
+        df_leads = self.admet.hard_filter(df_leads)
+        if df_leads.empty:
+            logger.warning("All lead candidates removed by ADMET hard filters.")
+            return df_leads
 
         logger.info("=== Lead Optimization Step 4: MD Simulation ===")
         if protein_info:
@@ -123,7 +127,12 @@ class LeadOptimizer:
         dock_available = dock_s is not None and dock_s.notna().any()
         dock_norm = self._normalise_lower_better(dock_s) if dock_available else None
 
-        admet_norm = 1.0 - df.get("admet_risk", pd.Series(0.5, index=df.index)).fillna(0.5)
+        # Soft CYP signal only (hERG / Veber / SA are hard-filtered upstream).
+        if self.w_cyp_soft > 1e-9 and "cyp_risk" in df.columns:
+            cyp = df["cyp_risk"].fillna(False).astype(bool)
+            cyp_norm = (~cyp).astype(float) + 0.55 * cyp.astype(float)
+        else:
+            cyp_norm = None
 
         md_s = df.get("md_binding_energy")
         md_available = md_s is not None and md_s.notna().any()
@@ -134,7 +143,8 @@ class LeadOptimizer:
         stab_norm = self._normalise_lower_better(rmsd_s) if stab_available else None
 
         components: list[tuple[float, pd.Series]] = []
-        components.append((self.w_admet, admet_norm))
+        if cyp_norm is not None:
+            components.append((self.w_cyp_soft, cyp_norm))
         if dock_norm is not None:
             components.append((self.w_docking, dock_norm))
         else:
@@ -209,7 +219,7 @@ class LeadOptimizer:
             "pred_pIC50_ens", "QED", "mpo_score",
             "docking_score", "sa_score", "herg_flag", "cyp_risk",
             "veber_pass", "admet_risk",
-            "md_binding_energy", "md_rmsd_mean",
+            "md_binding_energy", "md_binding_energy_std", "md_rmsd_mean",
             "explicit_binding_energy", "explicit_rmsd_mean", "explicit_rmsd_drift",
             "opt_score",
             "is_approved", "max_phase", "pref_name",

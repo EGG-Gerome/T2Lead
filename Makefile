@@ -132,8 +132,10 @@ run-docking:  ## Run in docking-only mode (requires TARGET=CHEMBLxxxx)
 	$(PYTHON) scripts/run_pipeline.py --target "$(TARGET)" --docking-only -v
 
 clean:  ## Remove cached data (fingerprints, models, scored candidates)
-	rm -rf data/fp_cache data/*/model_cache data/*/scored_candidates.csv
-	rm -rf data/*/docking_poses data/*/md_trajectories
+	rm -rf data/fp_cache
+	rm -rf data/*/model_cache data/*/stage2_hits/model_cache data/*/stage2_hits/scored_candidates.csv
+	rm -rf data/*/docking_poses data/*/stage4_optimization/docking_poses data/*/stage4_optimization/*/docking_poses
+	rm -rf data/*/md_trajectories data/*/stage4_optimization/md_trajectories data/*/stage4_optimization/*/md_trajectories
 	@echo "Caches cleared. Raw crawl data (molecules/activities CSVs) preserved."
 
 clean-all:  ## Remove ALL output data (including crawled ChEMBL data)

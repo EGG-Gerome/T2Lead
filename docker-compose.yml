@@ -1,0 +1,23 @@
+# T2Lead — optional Compose wrapper (edit for GPU).
+services:
+  t2lead:
+    build: .
+    image: t2lead:latest
+    working_dir: /app
+    volumes:
+      - .:/app
+      # Large outputs
+      - t2lead-data:/data
+    environment:
+      - DP_PIPELINE__OUT_DIR=/data/T2Lead
+    # Uncomment for NVIDIA GPU (requires nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  t2lead-data:

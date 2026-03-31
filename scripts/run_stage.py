@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from drugpipe.config import load_config
 from drugpipe.pipeline import run_hit_to_lead, run_target_discovery, run_target_to_hit
+from drugpipe.paths import STAGE2, run_root_for_config, stage_paths
 
 
 # main 的核心行为与设计意图。
@@ -74,9 +75,9 @@ def main() -> None:
 
     elif args.stage == "hit_to_lead":
         import pandas as pd
-        from drugpipe.config import get_out_dir
-
-        hits_path = args.hits_csv or str(get_out_dir(cfg) / "final_hit_candidates.csv")
+        run_root = run_root_for_config(cfg)
+        default_hits = stage_paths(run_root, cfg)[STAGE2] / "final_hit_candidates.csv"
+        hits_path = args.hits_csv or str(default_hits)
         df_hits = pd.read_csv(hits_path)
         print(f"Loaded {len(df_hits)} hits from {hits_path}")
         df_leads = run_hit_to_lead(cfg, df_hits)

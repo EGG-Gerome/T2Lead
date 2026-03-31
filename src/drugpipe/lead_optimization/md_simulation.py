@@ -73,7 +73,7 @@ except ImportError:
 
 # 2 fs timestep → 500 steps per picosecond
 _MD_TIMESTEP_PS = 0.002
-_MD_STEPS_PER_PS = int(round(0.001 / _MD_TIMESTEP_PS))
+_MD_STEPS_PER_PS = int(round(1.0 / _MD_TIMESTEP_PS))
 
 # kJ/mol → kcal/mol conversion factor
 _KJ_TO_KCAL = 1.0 / 4.184
@@ -129,6 +129,8 @@ class _ComplexState:
     n_rec_atoms: int
     lig_init_pos: np.ndarray  # Å, shape (n_lig_atoms, 3)
     heavy_mask: np.ndarray  # bool, shape (n_lig_atoms,)
+    lig_topology: Any  # ligand-only OpenMM Topology (heavy + H)
+    min_positions: Any  # OpenMM positions after minimize (full complex)
 
 
 def _validate_platform(name: str, props: Dict[str, str]) -> bool:
@@ -286,6 +288,13 @@ class MDSimulator:
         self.production_ns = float(md.get("production_ns", 1.0))
         self.gb_model = md.get("gb_model", "OBC2")
 
+        ens = md.get("ensemble", {})
+        self.ensemble_enabled = bool(ens.get("enabled", False))
+        self.ensemble_n_runs = max(1, int(ens.get("n_runs", 5)))
+        self.ensemble_equil_ps = float(ens.get("equilibration_ps", 100))
+        self.ensemble_prod_ps = float(ens.get("production_ps", 200))
+        self.ensemble_sample_ps = max(0.001, float(ens.get("sample_interval_ps", 5)))
+
         device_str = cfg.get("pipeline", {}).get("device", "auto")
         self.platform, self.platform_props = _select_platform(device_str)
 
@@ -298,10 +307,11 @@ class MDSimulator:
     ) -> pd.DataFrame:
         """Run MD + MM-GBSA on the top-N candidates (by docking score).
 
-        Adds columns: ``md_binding_energy``, ``md_rmsd_mean``.
+        Adds columns: ``md_binding_energy``, ``md_binding_energy_std`` (ensemble), optional ``md_rmsd_mean``.
         """
         df = df.copy()
         df["md_binding_energy"] = np.nan
+        df["md_binding_energy_std"] = np.nan
         df["md_rmsd_mean"] = np.nan
 
         if not self.enabled:
@@ -348,9 +358,11 @@ class MDSimulator:
                 if _p and str(_p) != "" and Path(str(_p)).is_file():
                     pose_path = str(_p)
 
-            energy, rmsd = self._simulate_one(smi, pdb_path, md_dir, idx, pose_path)
+            energy, rmsd, estd = self._simulate_one(smi, pdb_path, md_dir, idx, pose_path)
             if energy is not None:
                 df.at[idx, "md_binding_energy"] = energy
+            if estd is not None and np.isfinite(estd):
+                df.at[idx, "md_binding_energy_std"] = estd
             if rmsd is not None:
                 df.at[idx, "md_rmsd_mean"] = rmsd
 
@@ -374,57 +386,101 @@ class MDSimulator:
         md_dir: Path,
         mol_idx: int,
         docking_pose_path: Optional[str] = None,
-    ) -> Tuple[Optional[float], Optional[float]]:
-        """Compute MM-GBSA binding energy and ligand RMSD for ranking.
+    ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+        """Compute MM-GBSA-style binding estimate and ligand RMSD for ranking.
 
-        ΔG = E(complex) − E(receptor) − E(ligand).
+        ΔG ≈ E(complex) − E(receptor) − E(ligand) with ligand energies evaluated
+        on the **minimised complex ligand geometry** (not a disjoint RDKit
+        conformer). Optional **ensemble** mode samples ΔG along short independent
+        MD runs and reports mean ± std (receptor/ligand terms fixed to the
+        post-minimisation single-structure evaluation).
 
-        After minimisation, a short Langevin trajectory (``equilibration_ps``,
-        ``production_ns`` from config) yields **trajectory RMSD**: mean
-        heavy-atom RMSD of the ligand vs the initial docked pose over 1-ps
-        snapshots. If trajectory integration fails, **pose RMSD** (before /
-        after minimisation) is used instead.
-
-        Returns (binding_energy_kcal, rmsd_angstrom for ``md_rmsd_mean``).
+        Returns (binding_energy_kcal, rmsd_angstrom, binding_std_kcal_or_None).
         """
         try:
             off_mol = OFFMolecule.from_smiles(smiles, allow_undefined_stereo=True)
         except Exception as exc:
             logger.warning("Mol %d: OpenFF cannot parse SMILES: %s", mol_idx, exc)
-            return None, None
+            return None, None, None
 
         try:
             complex_energy, pose_rmsd, md_state = self._gb_energy_complex(
                 receptor_pdb, smiles, off_mol, docking_pose_path,
             )
             receptor_energy = self._gb_energy_receptor(receptor_pdb)
-            ligand_energy = self._gb_energy_ligand(smiles, off_mol)
 
-            if all(e is not None for e in (complex_energy, receptor_energy, ligand_energy)):
-                binding = complex_energy - receptor_energy - ligand_energy
-                traj_rmsd: Optional[float] = None
-                if md_state is not None:
-                    traj_rmsd = self._run_trajectory(md_state, mol_idx)
-                final_rmsd = traj_rmsd if traj_rmsd is not None else pose_rmsd
-                logger.info(
-                    "Mol %d MM-GBSA: complex=%.1f  receptor=%.1f  ligand=%.1f"
-                    "  ΔG=%.2f kcal/mol  pose_RMSD=%s Å  traj_RMSD=%s Å  md_rmsd_mean=%s Å",
-                    mol_idx, complex_energy, receptor_energy, ligand_energy, binding,
-                    f"{pose_rmsd:.2f}" if pose_rmsd is not None else "N/A",
-                    f"{traj_rmsd:.2f}" if traj_rmsd is not None else "N/A",
-                    f"{final_rmsd:.2f}" if final_rmsd is not None else "N/A",
+            ligand_energy: Optional[float] = None
+            if md_state is not None:
+                lig_block = self._ligand_pdb_block_from_complex(
+                    md_state.simulation,
+                    md_state.n_rec_atoms,
+                    md_state.lig_topology,
                 )
-                return binding, final_rmsd
-            else:
+                if lig_block:
+                    ligand_energy = self._gb_energy_ligand_from_pdb_block(lig_block, off_mol)
+            if ligand_energy is None:
+                ligand_energy = self._gb_energy_ligand(smiles, off_mol)
+
+            if not all(e is not None for e in (complex_energy, receptor_energy, ligand_energy)):
                 logger.warning(
                     "Mol %d: incomplete energies (complex=%s, receptor=%s, ligand=%s)",
                     mol_idx, complex_energy, receptor_energy, ligand_energy,
                 )
-            return None, None
+                return None, None, None
+
+            binding = float(complex_energy - receptor_energy - ligand_energy)
+            bind_std: Optional[float] = None
+            traj_rmsd: Optional[float] = None
+
+            if (
+                self.ensemble_enabled
+                and md_state is not None
+                and md_state.min_positions is not None
+            ):
+                bind_mean, bind_std, traj_rmsd = self._ensemble_binding_and_rmsd(
+                    md_state,
+                    float(receptor_energy),
+                    float(ligand_energy),
+                    mol_idx,
+                )
+                if bind_mean is not None:
+                    binding = bind_mean
+            elif md_state is not None:
+                traj_rmsd = self._run_trajectory(md_state, mol_idx)
+
+            final_rmsd = traj_rmsd if traj_rmsd is not None else pose_rmsd
+            if bind_std is not None and bind_std > 1e-6:
+                logger.info(
+                    "Mol %d MM-GBSA: complex=%.1f  receptor=%.1f  ligand=%.1f"
+                    "  ΔG=%.2f ± %.2f kcal/mol  pose_RMSD=%s Å  traj_RMSD=%s Å  md_rmsd_mean=%s Å",
+                    mol_idx,
+                    complex_energy,
+                    receptor_energy,
+                    ligand_energy,
+                    binding,
+                    bind_std,
+                    f"{pose_rmsd:.2f}" if pose_rmsd is not None else "N/A",
+                    f"{traj_rmsd:.2f}" if traj_rmsd is not None else "N/A",
+                    f"{final_rmsd:.2f}" if final_rmsd is not None else "N/A",
+                )
+            else:
+                logger.info(
+                    "Mol %d MM-GBSA: complex=%.1f  receptor=%.1f  ligand=%.1f"
+                    "  ΔG=%.2f kcal/mol  pose_RMSD=%s Å  traj_RMSD=%s Å  md_rmsd_mean=%s Å",
+                    mol_idx,
+                    complex_energy,
+                    receptor_energy,
+                    ligand_energy,
+                    binding,
+                    f"{pose_rmsd:.2f}" if pose_rmsd is not None else "N/A",
+                    f"{traj_rmsd:.2f}" if traj_rmsd is not None else "N/A",
+                    f"{final_rmsd:.2f}" if final_rmsd is not None else "N/A",
+                )
+            return binding, final_rmsd, bind_std
 
         except Exception as exc:
             logger.warning("MD simulation failed for mol %d: %s", mol_idx, exc)
-            return None, None
+            return None, None, None
 
     # ------------------------------------------------------------------
     def _gb_energy_complex(
@@ -511,11 +567,14 @@ class MDSimulator:
             else:
                 pose_rmsd = None
 
+            min_positions = state.getPositions()
             md_state = _ComplexState(
                 simulation=simulation,
                 n_rec_atoms=n_rec_atoms,
                 lig_init_pos=np.asarray(lig_init_pos, dtype=np.float64).copy(),
                 heavy_mask=np.asarray(heavy_mask, dtype=bool).copy(),
+                lig_topology=lig_pdb_obj.topology,
+                min_positions=min_positions,
             )
             return energy, pose_rmsd, md_state
 
@@ -576,6 +635,111 @@ class MDSimulator:
                 mol_idx,
                 exc,
             )
+            return None
+
+    def _ensemble_binding_and_rmsd(
+        self,
+        md_state: _ComplexState,
+        receptor_energy: float,
+        ligand_energy: float,
+        mol_idx: int,
+    ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+        """Independent short MD replicas; approximate ΔG(t)=E_c(t)-E_r-E_l, mean ligand RMSD."""
+        sim = md_state.simulation
+        if md_state.min_positions is None:
+            return None, None, None
+        bindings: List[float] = []
+        run_rmsd_avgs: List[float] = []
+
+        for run in range(self.ensemble_n_runs):
+            try:
+                sim.context.setPositions(md_state.min_positions)
+                seed = 42 + run * 9973 + int(mol_idx) * 13
+                sim.context.setVelocitiesToTemperature(300 * unit.kelvin, seed)
+            except Exception as exc:
+                logger.warning("Mol %d ensemble run %d: reset failed (%s)", mol_idx, run, exc)
+                continue
+
+            eq_steps = max(0, int(round(self.ensemble_equil_ps * _MD_STEPS_PER_PS)))
+            if eq_steps:
+                sim.step(eq_steps)
+
+            prod_steps = max(1, int(round(self.ensemble_prod_ps * _MD_STEPS_PER_PS)))
+            sample_steps = max(1, int(round(self.ensemble_sample_ps * _MD_STEPS_PER_PS)))
+            run_rmsds: List[float] = []
+
+            done = 0
+            while done + sample_steps <= prod_steps:
+                sim.step(sample_steps)
+                done += sample_steps
+                st_e = sim.context.getState(getEnergy=True)
+                ec = _energy_as_kcal(st_e.getPotentialEnergy())
+                bindings.append(ec - receptor_energy - ligand_energy)
+                r = self._ligand_rmsd_from_simulation(sim, md_state)
+                if r is not None and np.isfinite(r):
+                    run_rmsds.append(float(r))
+
+            if run_rmsds:
+                run_rmsd_avgs.append(float(np.mean(run_rmsds)))
+
+        if not bindings:
+            return None, None, None
+        mean_b = float(np.mean(bindings))
+        std_b = float(np.std(bindings)) if len(bindings) > 1 else 0.0
+        mean_rmsd = float(np.mean(run_rmsd_avgs)) if run_rmsd_avgs else None
+        return mean_b, std_b, mean_rmsd
+
+    @staticmethod
+    def _ligand_pdb_block_from_complex(
+        simulation: Any,
+        n_rec_atoms: int,
+        lig_topology: Any,
+    ) -> Optional[str]:
+        """PDB text for the ligand slice of the current complex coordinates."""
+        try:
+            st = simulation.context.getState(getPositions=True)
+            all_pos = _positions_as_angstrom(st.getPositions())
+        except Exception:
+            return None
+        lines: List[str] = []
+        atoms = list(lig_topology.atoms())
+        for i, atom in enumerate(atoms):
+            gi = n_rec_atoms + i
+            if gi >= len(all_pos):
+                return None
+            x, y, z = all_pos[gi]
+            elem = atom.element
+            sym = elem.symbol if elem is not None else "C"
+            raw_name = atom.name.strip() if atom.name else sym
+            name = (raw_name[:4] + "    ")[:4]
+            lines.append(
+                f"HETATM{i + 1:5d} {name} LIG A   1    "
+                f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {sym:>2s}\n"
+            )
+        lines.append("END\n")
+        return "".join(lines)
+
+    def _gb_energy_ligand_from_pdb_block(
+        self, pdb_block: str, off_mol: Any,
+    ) -> Optional[float]:
+        """GB implicit-solvent energy of ligand in a fixed PDB geometry."""
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".pdb", mode="w", delete=False) as tmp:
+                tmp.write(pdb_block)
+                tmp_path = tmp.name
+            pdb = app.PDBFile(tmp_path)
+            modeller = app.Modeller(pdb.topology, pdb.positions)
+
+            gaff = GAFFTemplateGenerator(molecules=off_mol, forcefield="gaff-2.11")
+            ff_path = "implicit/obc2.xml"
+            if str(self.gb_model).upper() == "OBC1":
+                ff_path = "implicit/obc1.xml"
+            forcefield = app.ForceField("amber14-all.xml", ff_path)
+            forcefield.registerTemplateGenerator(gaff.generator)
+
+            return self._minimise_and_energy(forcefield, modeller)
+        except Exception as exc:
+            logger.debug("Ligand GB from PDB block failed: %s", exc)
             return None
 
     @staticmethod

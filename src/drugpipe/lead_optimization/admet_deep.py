@@ -81,6 +81,11 @@ class DeepADMET:
         self.enabled = bool(ad.get("enabled", True))
         self.sa_max = float(ad.get("sa_score_max", 6.0))
         self.herg_filter = bool(ad.get("herg_filter", True))
+        hf = ad.get("hard_filter", {})
+        self.hard_filter_enabled = bool(hf.get("enabled", True))
+        self.hard_drop_herg = bool(hf.get("drop_herg", True))
+        self.hard_drop_veber = bool(hf.get("drop_veber_fail", True))
+        self.hard_drop_high_sa = bool(hf.get("drop_high_sa", True))
 
     # ------------------------------------------------------------------
     def profile(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -120,6 +125,63 @@ class DeepADMET:
         logger.info(
             "Enhanced ADMET complete: %d / %d flagged as high-risk (>0.5).",
             n_risky, len(df),
+        )
+        return df
+
+    def hard_filter(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Drop compounds failing safety / developability gates before MD / ranking.
+
+        Eliminates hERG liability, Veber failures, and high SA by default.
+        CYP risk is retained for soft scoring only (see ``w_cyp_soft``).
+        Survivors get ``admet_risk`` recomputed as CYP-only soft signal for logs.
+        """
+        if not self.enabled or not self.hard_filter_enabled:
+            return df
+
+        df = df.copy()
+        n0 = len(df)
+        reasons: list[pd.Series] = []
+
+        if self.hard_drop_herg and "herg_flag" in df.columns:
+            bad = df["herg_flag"].fillna(False).astype(bool)
+            reasons.append(bad)
+            n = int(bad.sum())
+            if n:
+                logger.info("ADMET hard filter: dropping %d compounds (hERG liability).", n)
+
+        if self.hard_drop_veber and "veber_pass" in df.columns:
+            bad = ~df["veber_pass"].fillna(True).astype(bool)
+            reasons.append(bad)
+            n = int(bad.sum())
+            if n:
+                logger.info("ADMET hard filter: dropping %d compounds (Veber fail).", n)
+
+        if self.hard_drop_high_sa and "sa_score" in df.columns:
+            bad = df["sa_score"].astype(float) > self.sa_max
+            reasons.append(bad.fillna(True))
+            n = int(bad.sum())
+            if n:
+                logger.info(
+                    "ADMET hard filter: dropping %d compounds (SA > %.1f).",
+                    n,
+                    self.sa_max,
+                )
+
+        if reasons:
+            drop_mask = reasons[0].copy()
+            for r in reasons[1:]:
+                drop_mask = drop_mask | r
+            df = df.loc[~drop_mask].reset_index(drop=True)
+
+        # CYP-only residual risk for downstream logging / optional soft weight
+        for idx in df.index:
+            cyp = bool(df.at[idx, "cyp_risk"]) if "cyp_risk" in df.columns else False
+            df.at[idx, "admet_risk"] = round(0.15 * float(cyp), 4)
+
+        logger.info(
+            "ADMET hard filter: %d -> %d compounds retained.",
+            n0,
+            len(df),
         )
         return df
 

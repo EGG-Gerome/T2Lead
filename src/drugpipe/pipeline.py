@@ -18,6 +18,16 @@ import pandas as pd
 from rdkit import RDLogger
 
 from drugpipe.config import get_out_dir, load_config
+from drugpipe.paths import (
+    STAGE1,
+    STAGE2,
+    STAGE3,
+    STAGE4,
+    disease_slug,
+    resolve_variant_stage4_out,
+    run_root_for_config,
+    stage_paths,
+)
 
 RDLogger.DisableLog("rdApp.warning")
 
@@ -279,17 +289,6 @@ def run_lead_optimization(
 # 完整流水线
 # ======================================================================
 
-def _disease_slug(disease: str) -> str:
-    """Convert disease text into a filesystem-safe slug.
-    将疾病名称转换为文件系统安全的目录名。
-    """
-    import re
-    slug = disease.strip().lower()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s]+", "_", slug)
-    return slug or "default"
-
-
 def _run_variant_analysis(cfg: Dict[str, Any], out_dir: Path) -> List[Dict[str, Any]]:
     """Execute the variant-analysis pathway: VCF parsing → mutant sequences → structures.
 
@@ -356,13 +355,8 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
     _set_seed(seed)
 
     base_out_dir = get_out_dir(cfg)
-
-    disease = cfg.get("target_discovery", {}).get("disease", "")
-    if disease:
-        run_out_dir = base_out_dir / _disease_slug(disease)
-        run_out_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        run_out_dir = base_out_dir
+    run_out_dir = run_root_for_config(cfg)
+    layout = stage_paths(run_out_dir, cfg)
 
     logger.info("Pipeline base output: %s", base_out_dir)
     logger.info("Run-specific output : %s", run_out_dir)
@@ -383,16 +377,30 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         if mutant_structures:
             logger.info("Variant analysis produced %d mutant structures.", len(mutant_structures))
             if "lead_optimization" in stages:
+                leads_csv = layout[STAGE3] / "final_lead_candidates.csv"
+                if not leads_csv.exists():
+                    logger.error(
+                        "Variant-driven Stage 4 requires lead candidates at %s "
+                        "(run Stages 2–3 first or copy a lead CSV there).",
+                        leads_csv,
+                    )
+                    return
+                df_vcf_leads = pd.read_csv(leads_csv)
+                logger.info("Loaded %d leads from %s", len(df_vcf_leads), leads_csv)
                 for ms in mutant_structures:
                     logger.info(
                         "Running Stage 4 against %s %s (%s)",
                         ms["gene"], ms["mutation"], ms["method"],
                     )
-                    cfg_mut = _override_out_dir(cfg, run_out_dir)
+                    s4_out = resolve_variant_stage4_out(
+                        run_out_dir, cfg, str(ms["gene"]), str(ms["mutation"]),
+                    )
+                    cfg_mut = _override_out_dir(cfg, s4_out)
                     lo = cfg_mut.setdefault("lead_optimization", {})
                     lo["pdb_id"] = ""
                     lo["protein_sequence"] = ""
                     lo["_mutant_pdb_path"] = ms["pdb_path"]
+                    run_lead_optimization(cfg_mut, df_vcf_leads)
             logger.info("=" * 60)
             logger.info("VARIANT-DRIVEN PIPELINE COMPLETE")
             logger.info("=" * 60)
@@ -408,6 +416,13 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         if all_targets:
             target_chembl_id = all_targets[0]["chembl_id"]
             logger.info("Top-ranked target: %s", target_chembl_id)
+            try:
+                pd.DataFrame(all_targets).to_csv(
+                    layout[STAGE1] / "ranked_targets.csv",
+                    index=False,
+                )
+            except Exception as exc:
+                logger.debug("Could not write ranked_targets.csv: %s", exc)
         else:
             logger.warning("No targets found. Stage 2 will use config target_chembl_id or auto-select.")
 
@@ -417,21 +432,24 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         logger.info("STAGE 2: Target to Hit")
         logger.info("=" * 60)
 
+        crawl_root = layout[STAGE2]
         if all_targets and "target_discovery" in stages:
             # Crawl first so _pick_viable_target can check actual IC50 counts
-            act_csv = base_out_dir / "activities_ic50.csv"
+            act_csv = crawl_root / "activities_ic50.csv"
             if not act_csv.exists():
                 logger.info("Crawling ChEMBL data before target selection ...")
                 from drugpipe.target_to_hit.chembl_api import ChEMBLCrawler
-                crawler = ChEMBLCrawler(cfg, base_out_dir)
+                crawler = ChEMBLCrawler(cfg, crawl_root)
                 crawler.crawl_molecules()
                 crawler.crawl_activities()
-            target_chembl_id = _pick_viable_target(cfg, all_targets, base_out_dir)
+            target_chembl_id = _pick_viable_target(cfg, all_targets, crawl_root)
 
-        # Crawl data is shared (base_out_dir); per-disease outputs go to run_out_dir
-        cfg_s2 = _override_out_dir(cfg, run_out_dir)
-        df_hits = run_target_to_hit(cfg_s2, target_chembl_id=target_chembl_id,
-                                     crawl_out_dir=base_out_dir)
+        cfg_s2 = _override_out_dir(cfg, crawl_root)
+        df_hits = run_target_to_hit(
+            cfg_s2,
+            target_chembl_id=target_chembl_id,
+            crawl_out_dir=crawl_root,
+        )
         trainer = df_hits.attrs.get("_trainer")
         featurizer = df_hits.attrs.get("_featurizer")
 
@@ -441,7 +459,7 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         logger.info("STAGE 3: Hit to Lead")
         logger.info("=" * 60)
         if df_hits is None:
-            hit_csv = run_out_dir / "final_hit_candidates.csv"
+            hit_csv = layout[STAGE2] / "final_hit_candidates.csv"
             if hit_csv.exists():
                 df_hits = pd.read_csv(hit_csv)
                 logger.info("Loaded hits from %s (%d rows)", hit_csv, len(df_hits))
@@ -449,7 +467,7 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
                 logger.error("No hit candidates available. Run Stage 2 first.")
                 return
 
-        cfg_s3 = _override_out_dir(cfg, run_out_dir)
+        cfg_s3 = _override_out_dir(cfg, layout[STAGE3])
         predict_fn = trainer.predict if trainer else None
         feat_fn = featurizer.transform if featurizer else None
         df_leads = run_hit_to_lead(cfg_s3, df_hits, model_predict_fn=predict_fn, featurizer_fn=feat_fn)
@@ -460,7 +478,7 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         logger.info("STAGE 4: Lead Optimization")
         logger.info("=" * 60)
         if df_leads is None:
-            leads_csv = run_out_dir / "final_lead_candidates.csv"
+            leads_csv = layout[STAGE3] / "final_lead_candidates.csv"
             if leads_csv.exists():
                 df_leads = pd.read_csv(leads_csv)
                 logger.info("Loaded leads from %s (%d rows)", leads_csv, len(df_leads))
@@ -468,7 +486,7 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
                 logger.error("No lead candidates available. Run Stage 3 first.")
                 return
 
-        cfg_s4 = _override_out_dir(cfg, run_out_dir)
+        cfg_s4 = _override_out_dir(cfg, layout[STAGE4])
         run_lead_optimization(cfg_s4, df_leads)
 
     logger.info("=" * 60)
@@ -599,8 +617,8 @@ def _setup_file_logging(
     """
     import datetime
 
-    out_dir = get_out_dir(cfg)
-    log_dir = out_dir / "logs"
+    run_out = run_root_for_config(cfg)
+    log_dir = stage_paths(run_out, cfg)["logs"]
     log_dir.mkdir(parents=True, exist_ok=True)
 
     disease = cfg.get("target_discovery", {}).get("disease", "")
@@ -609,7 +627,7 @@ def _setup_file_logging(
 
     parts = [ts]
     if disease:
-        parts.append(_disease_slug(disease))
+        parts.append(disease_slug(disease))
     if target:
         parts.append(target)
     stem = "_".join(parts)

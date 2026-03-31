@@ -13,6 +13,9 @@ pipeline:
   seed: 42
   out_dir: ./data
   device: auto                       # auto | cuda | mps | cpu (for MLP training + OpenMM MD)
+  # When true, artifacts go under <run_root>/stage{1..4}_*/ and <run_root>/logs/
+  output_layout:
+    use_stage_subdirs: true
 
 # -------------------------------------------------------------------
 # Variant Analysis — optional tumor/normal somatic mutation bridge
@@ -175,6 +178,12 @@ lead_optimization:
     enabled: true
     sa_score_max: 6.0                # synthetic accessibility cutoff (1=easy, 10=hard)
     herg_filter: true
+    # Hard gates (rows removed before MD). CYP remains a soft signal via scoring.w_cyp_soft.
+    hard_filter:
+      enabled: true
+      drop_herg: true                # hERG toxicophore match
+      drop_veber_fail: true          # Veber oral-bioavailability rules
+      drop_high_sa: true             # SA score > sa_score_max
 
   md_simulation:
     enabled: true
@@ -182,6 +191,13 @@ lead_optimization:
     equilibration_ps: 100
     production_ns: 1.0
     gb_model: "OBC2"                 # OBC1, OBC2, GBn, GBn2
+    # Ensemble MM-GBSA: multiple short MD runs; mean/std of approximate ΔG snapshots.
+    ensemble:
+      enabled: true
+      n_runs: 5
+      equilibration_ps: 100          # per-run equilibration before production
+      production_ps: 200               # per-run production length (picoseconds)
+      sample_interval_ps: 5            # sample complex potential energy every N ps
 
   explicit_md:
     enabled: false                   # optional explicit-solvent refinement (TIP3P + PME)
@@ -195,10 +211,11 @@ lead_optimization:
       delta_opt_score_threshold: 0.05  # if top-N opt_score spread < this, auto-trigger
 
   scoring:
-    w_docking: 0.35
-    w_admet: 0.20
-    w_md_energy: 0.30
-    w_stability: 0.15
+    # ADMET (hERG / Veber / SA) is enforced via hard_filter; not part of weighted score.
+    w_docking: 0.25
+    w_md_energy: 0.40                # MM-GBSA-style implicit GB term
+    w_stability: 0.35                # trajectory / pose RMSD stability
+    w_cyp_soft: 0.08                 # soft penalty for CYP pharmacophore risk (0 = disable)
 
   approved_drug_check:
     enabled: true                      # query ChEMBL to flag known approved / clinical-stage drugs

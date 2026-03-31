@@ -33,9 +33,37 @@ from drugpipe.utils.chem import safe_mol
 logger = logging.getLogger(__name__)
 
 
+def _resolve_reinvent_device(cfg_device: str) -> str:
+    """Resolve ``pipeline.device`` to a PyTorch device string for REINVENT4.
+
+    Priority: cuda > mps > cpu (same semantics as pipeline-wide device).
+    REINVENT4 passes this string directly to ``torch.device()``.
+    """
+    cfg_device = cfg_device.lower().strip()
+
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+
+    if cfg_device in ("cuda", "auto"):
+        if torch.cuda.is_available():
+            return "cuda:0"
+        if cfg_device == "cuda":
+            logger.warning("CUDA requested but unavailable; REINVENT4 falling back to CPU.")
+
+    if cfg_device in ("mps", "auto"):
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+        if cfg_device == "mps":
+            logger.warning("MPS requested but unavailable; REINVENT4 falling back to CPU.")
+
+    return "cpu"
+
+
 _TOML_TEMPLATE = """\
 run_type = "staged_learning"
-device = "cpu"
+device = "{device}"
 
 [parameters]
 prior_file = "{prior_path}"
@@ -110,9 +138,10 @@ class Reinvent4Bridge:
         self.prior_path = r4.get("prior_path", "") or ""
         self.batch_size = int(r4.get("batch_size", 128))
         self.n_steps = int(r4.get("n_steps", 100))
-        # REINVENT4 CLI --log-level: default warning = hide INFO spam, keep WARNING/ERROR.
-        # Use "info" when debugging RL; "error" for minimal stderr (may hide useful warnings).
         self.log_level = (r4.get("log_level") or "warning").strip().lower()
+
+        pipeline_device = cfg.get("pipeline", {}).get("device", "auto")
+        self.device = _resolve_reinvent_device(pipeline_device)
 
     # ------------------------------------------------------------------
     def run(
@@ -158,6 +187,7 @@ class Reinvent4Bridge:
         output_prefix = str(out_dir / "reinvent4")
         chkpt_file = out_dir / "reinvent4_agent.ckpt"
         toml_content = _TOML_TEMPLATE.format(
+            device=self.device,
             prior_path=self.prior_path,
             output_prefix=output_prefix,
             batch_size=self.batch_size,
@@ -171,7 +201,8 @@ class Reinvent4Bridge:
         toml_path.write_text(toml_content, encoding="utf-8")
 
         logger.info(
-            "Launching REINVENT4 (steps=%d, batch=%d, log_level=%s) ...",
+            "Launching REINVENT4 (device=%s, steps=%d, batch=%d, log_level=%s) ...",
+            self.device,
             self.n_steps,
             self.batch_size,
             self.log_level,
