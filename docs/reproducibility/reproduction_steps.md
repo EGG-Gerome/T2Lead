@@ -1,5 +1,7 @@
 # Reproduction checklist
 
+[中文版 (reproduction_steps_zh.md)](reproduction_steps_zh.md)
+
 Use this to verify T2Lead on a clean machine or for publication supplements.
 
 ## 1. Environment

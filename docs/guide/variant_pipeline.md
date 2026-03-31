@@ -1,5 +1,7 @@
 # Variant-driven workflow (core path)
 
+[中文版 (variant_pipeline_zh.md)](variant_pipeline_zh.md)
+
 ## Overview
 
 1. Obtain **tumor/normal** alignments and somatic variants (e.g. **nf-core/sarek** with Mutect2 + VEP), or provide a **ready-made VEP-annotated VCF**.

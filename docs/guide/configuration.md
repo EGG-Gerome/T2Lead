@@ -1,5 +1,7 @@
 # Configuration reference
 
+[中文版 (configuration_zh.md)](configuration_zh.md)
+
 Primary file: **`configs/default_config.yaml`**. Overrides merge in this order (lowest first):
 
 1. Default YAML  

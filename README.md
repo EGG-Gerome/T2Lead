@@ -69,15 +69,16 @@ GPU: uncomment the `deploy` section in [docker-compose.yml](docker-compose.yml).
 
 ## Documentation index
 
-| Doc | Purpose |
-|-----|---------|
-| [docs/guide/quickstart.md](docs/guide/quickstart.md) | Install, env vars, first run |
-| [docs/guide/variant_pipeline.md](docs/guide/variant_pipeline.md) | VCF/FASTQ → structures → Stage 4 |
-| [docs/guide/disease_pipeline.md](docs/guide/disease_pipeline.md) | Stages 1–4 from disease name |
-| [docs/guide/configuration.md](docs/guide/configuration.md) | YAML / `DP_*` reference |
-| [docs/guide/output_reference.md](docs/guide/output_reference.md) | File-by-file outputs |
-| [docs/reproducibility/reproduction_steps.md](docs/reproducibility/reproduction_steps.md) | Reviewer / replicator checklist |
-| [docs/research/somatic_variant_pipeline_feasibility.md](docs/research/somatic_variant_pipeline_feasibility.md) | Feasibility note |
+| Doc | Purpose | 中文 |
+|-----|---------|------|
+| [docs/guide/quickstart.md](docs/guide/quickstart.md) | Install, env vars, first run | [quickstart_zh.md](docs/guide/quickstart_zh.md) |
+| [docs/guide/variant_pipeline.md](docs/guide/variant_pipeline.md) | VCF/FASTQ → structures → Stage 4 | [variant_pipeline_zh.md](docs/guide/variant_pipeline_zh.md) |
+| [docs/guide/disease_pipeline.md](docs/guide/disease_pipeline.md) | Stages 1–4 from disease name | [disease_pipeline_zh.md](docs/guide/disease_pipeline_zh.md) |
+| [docs/guide/configuration.md](docs/guide/configuration.md) | YAML / `DP_*` reference | [configuration_zh.md](docs/guide/configuration_zh.md) |
+| [docs/guide/output_reference.md](docs/guide/output_reference.md) | File-by-file outputs | [output_reference_zh.md](docs/guide/output_reference_zh.md) |
+| [docs/reproducibility/reproduction_steps.md](docs/reproducibility/reproduction_steps.md) | Reviewer / replicator checklist | [reproduction_steps_zh.md](docs/reproducibility/reproduction_steps_zh.md) |
+| [docs/reproducibility/test_data_preparation.md](docs/reproducibility/test_data_preparation.md) | WES/WGS test data | [test_data_preparation_zh.md](docs/reproducibility/test_data_preparation_zh.md) |
+| [docs/research/somatic_variant_pipeline_feasibility.md](docs/research/somatic_variant_pipeline_feasibility.md) | Feasibility note | [somatic_variant_pipeline_feasibility_zh.md](docs/research/somatic_variant_pipeline_feasibility_zh.md) |
 
 ## Project layout (short)
 

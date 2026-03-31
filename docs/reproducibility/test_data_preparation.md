@@ -1,5 +1,7 @@
 # Test data preparation (WES / WGS)
 
+[中文版 (test_data_preparation_zh.md)](test_data_preparation_zh.md)
+
 T2Lead’s `variant_analysis` module expects either:
 
 1. **Paired FASTQ** for tumor and normal samples (passed through to nf-core/sarek when `vcf_path` is empty), or  

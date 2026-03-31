@@ -1,5 +1,7 @@
 # Quickstart
 
+[中文版 (quickstart_zh.md)](quickstart_zh.md)
+
 ## Requirements
 
 - Linux or macOS (Windows via WSL2).

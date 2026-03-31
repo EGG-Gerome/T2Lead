@@ -1,5 +1,7 @@
 # Output files
 
+[中文版 (output_reference_zh.md)](output_reference_zh.md)
+
 Assume run root: `<pipeline.out_dir>/<disease_slug>/` when a disease is set, else `<pipeline.out_dir>/`. With `use_stage_subdirs: false`, all stage keys collapse to the same directory.
 
 ## Stage 1 — `stage1_targets/`

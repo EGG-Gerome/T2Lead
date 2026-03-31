@@ -546,6 +546,24 @@ python -m pytest tests/ -v
 
 ---
 
+## 中文文档索引
+
+| 文档 | 说明 |
+|------|------|
+| [docs/guide/quickstart_zh.md](docs/guide/quickstart_zh.md) | 安装、环境变量、首次运行 |
+| [docs/guide/variant_pipeline_zh.md](docs/guide/variant_pipeline_zh.md) | VCF/FASTQ → 结构 → 阶段四 |
+| [docs/guide/disease_pipeline_zh.md](docs/guide/disease_pipeline_zh.md) | 疾病名驱动阶段一至四 |
+| [docs/guide/configuration_zh.md](docs/guide/configuration_zh.md) | YAML / `DP_*` 参考 |
+| [docs/guide/output_reference_zh.md](docs/guide/output_reference_zh.md) | 输出文件逐项说明 |
+| [docs/reproducibility/reproduction_steps_zh.md](docs/reproducibility/reproduction_steps_zh.md) | 复现检查清单 |
+| [docs/reproducibility/test_data_preparation_zh.md](docs/reproducibility/test_data_preparation_zh.md) | WES/WGS 测试数据准备 |
+| [docs/research/somatic_variant_pipeline_feasibility_zh.md](docs/research/somatic_variant_pipeline_feasibility_zh.md) | 体细胞变异路径可行性（[英文版](docs/research/somatic_variant_pipeline_feasibility.md)） |
+| [docs/postmortems/20260330_md_openmm_quantity_type_mismatch.md](docs/postmortems/20260330_md_openmm_quantity_type_mismatch.md) | 复盘：OpenMM Quantity 类型兼容性（中文正文） |
+
+各指南顶部均附有对应英文版链接。
+
+---
+
 ## 致谢与参考
 
 | 阶段 | 参考项目 | 我们借鉴/学习了什么 |

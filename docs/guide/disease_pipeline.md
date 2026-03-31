@@ -1,5 +1,7 @@
 # Disease-driven workflow (Stages 1–4)
 
+[中文版 (disease_pipeline_zh.md)](disease_pipeline_zh.md)
+
 This path demonstrates end-to-end discovery from a **disease label** through public data and generative tools, then **Stage 4** rescoring.
 
 ## Run
