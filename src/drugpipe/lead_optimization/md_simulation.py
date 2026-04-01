@@ -695,7 +695,11 @@ class MDSimulator:
         n_rec_atoms: int,
         lig_topology: Any,
     ) -> Optional[str]:
-        """PDB text for the ligand slice of the current complex coordinates."""
+        """PDB text for the ligand slice of the current complex coordinates.
+
+        Uses residue name ``UNL`` to match the template name that
+        ``GAFFTemplateGenerator`` assigns when parameterising small molecules.
+        """
         try:
             st = simulation.context.getState(getPositions=True)
             all_pos = _positions_as_angstrom(st.getPositions())
@@ -713,7 +717,7 @@ class MDSimulator:
             raw_name = atom.name.strip() if atom.name else sym
             name = (raw_name[:4] + "    ")[:4]
             lines.append(
-                f"HETATM{i + 1:5d} {name} LIG A   1    "
+                f"HETATM{i + 1:5d} {name} UNL A   1    "
                 f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {sym:>2s}\n"
             )
         lines.append("END\n")
