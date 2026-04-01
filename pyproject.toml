@@ -20,6 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dev = ["pytest>=8,<9"]
 dl = ["torch"]
 h2l = ["crem"]
 docking = ["vina", "meeko", "gemmi"]

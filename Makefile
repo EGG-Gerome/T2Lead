@@ -52,6 +52,7 @@ install-conda-stack:  ## Create conda env (if missing) and conda-forge scientifi
 install-pip-stack:  ## Editable install + docking + CReM (crem, vina, meeko, gemmi)
 	$(PYTHON) -m pip install -U pip
 	$(PYTHON) -m pip install -e ".[docking,h2l]"
+	$(PYTHON) -m pip install "pytest>=8,<9"
 
 install-torch:  ## PyTorch + torchvision (default cu124 GPU; set TORCH_INDEX_URL otherwise)
 	$(PYTHON) -m pip install torch torchvision --index-url $(TORCH_INDEX_URL)
@@ -121,8 +122,8 @@ run-sarek:  ## Run nf-core/sarek somatic variant calling (requires INPUT=samples
 		--tools mutect2,vep \
 		--outdir results/sarek
 
-test:  ## Run unit tests (pytest; no GPU or conda required)
-	python -m pytest tests/ -v
+test:  ## Run unit tests (pytest; uses conda env $(CONDA_ENV))
+	$(PYTHON) -m pytest tests/ -v
 
 run:  ## Run full pipeline (set DISEASE="lung cancer" to override)
 	$(PYTHON) scripts/run_pipeline.py --disease "$(DISEASE)" -v
