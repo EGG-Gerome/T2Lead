@@ -37,8 +37,9 @@ With default `pipeline.output_layout.use_stage_subdirs`, artifacts live under `<
 
 | Directory | Contents |
 |-----------|----------|
+| `shared/chembl_stage2/` | Default shared ChEMBL molecule + IC50 crawl, `crawl_state.json`, `fp_cache/` (`target_to_hit.shared_library_dir`) |
 | `stage1_targets/` | `ranked_targets.csv` |
-| `stage2_hits/` | ChEMBL crawl, `model_cache/`, `final_hit_candidates.csv`, … |
+| `stage2_hits/` | Per-disease training table, `model_cache/`, screening outputs, `final_hit_candidates.csv`, … |
 | `stage3_leads/` | `final_lead_candidates.csv`, REINVENT4 files |
 | `stage4_optimization/` | PDB/PDBQT, `docking_poses/`, `optimized_leads.csv`, MD trajectories |
 | `logs/` | Full and summary logs |
