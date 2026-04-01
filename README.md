@@ -58,14 +58,39 @@ User-owned inputs: [data/user_inputs/README.md](data/user_inputs/README.md).
 
 WES/WGS variant calling is documented in [docs/guide/variant_pipeline.md](docs/guide/variant_pipeline.md). Makefile targets: `make install-sarek`, `make run-sarek INPUT=samplesheet.csv`. **Does not** conflict with `make test` (single project Makefile).
 
-## Docker
+## Container runtime
+
+Stages 1–4 run **without any container** — conda is all you need. Containers are only required for the optional nf-core/sarek upstream (variant calling).
+
+### Docker — local dev / servers with Docker access
+
+For: laptops, Docker Desktop, cloud VMs with sudo.
 
 ```bash
+# T2Lead image
 docker compose build t2lead
 docker compose run --rm t2lead python -m pytest /app/tests -q
+
+# sarek
+nextflow run nf-core/sarek -profile docker ...
 ```
 
 GPU: uncomment the `deploy` section in [docker-compose.yml](docker-compose.yml). Default image uses CPU PyTorch.
+
+### Apptainer (Singularity) — AutoDL / HPC / restricted containers
+
+For: AutoDL instances, university HPC clusters, any environment where `dockerd` cannot start. These environments typically lack the kernel network privileges Docker needs (iptables / virtual bridges). Apptainer requires no daemon and no network capabilities — the standard choice on HPC.
+
+```bash
+# Install Apptainer (Ubuntu 22.04)
+wget https://github.com/apptainer/apptainer/releases/download/v1.4.5/apptainer_1.4.5_amd64.deb
+sudo apt install -y ./apptainer_1.4.5_amd64.deb
+
+# sarek
+nextflow run nf-core/sarek -profile singularity ...
+```
+
+> **Note:** nf-core maintains both `-profile docker` and `-profile singularity`; they are functionally identical, differing only in the container backend. If you are working on a cloud GPU server such as AutoDL, use the Singularity path.
 
 ## Documentation index
 

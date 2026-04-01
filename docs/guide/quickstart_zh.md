@@ -7,8 +7,20 @@
 - Linux 或 macOS（Windows 建议使用 WSL2）。
 - **Conda**（Miniconda / Mambaforge），用于安装 RDKit 与 OpenMM。
 - **Java 21+**，若通过 Nextflow 运行 nf-core/sarek。
-- **Docker**（或 Singularity），sarek 默认配置常用容器。
+- **容器运行时**（仅 sarek 变异检测需要，阶段一至四无需容器）：
+  - 本地开发 / 有 Docker 权限的服务器 → **Docker**（`-profile docker`）
+  - AutoDL / HPC / 无法启动 dockerd 的环境 → **Apptainer**（`-profile singularity`），见下方安装说明
 - NVIDIA GPU 推荐用于 MLP 训练与 OpenMM 分子动力学。
+
+### Apptainer 安装（AutoDL / HPC 用户）
+
+AutoDL 等云 GPU 容器和高校 HPC 集群通常无法运行 Docker（缺少内核网络权限）。安装 Apptainer 后即可通过 Singularity 后端运行 sarek：
+
+```bash
+wget https://github.com/apptainer/apptainer/releases/download/v1.4.5/apptainer_1.4.5_amd64.deb
+sudo apt install -y ./apptainer_1.4.5_amd64.deb
+apptainer --version   # 验证
+```
 
 ## 安装
 

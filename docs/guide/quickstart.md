@@ -7,8 +7,20 @@
 - Linux or macOS (Windows via WSL2).
 - **Conda** (Miniconda / Mambaforge) for RDKit + OpenMM.
 - **Java 21+** if you run nf-core/sarek via Nextflow.
-- **Docker** (or Singularity) for sarek’s default profile.
+- **Container runtime** (only needed for sarek variant calling; Stages 1–4 require no container):
+  - Local dev / servers with Docker access → **Docker** (`-profile docker`)
+  - AutoDL / HPC / environments where dockerd cannot start → **Apptainer** (`-profile singularity`), see install below
 - NVIDIA GPU recommended for MLP training and OpenMM MD.
+
+### Apptainer install (AutoDL / HPC users)
+
+Cloud GPU containers (AutoDL, etc.) and university HPC clusters typically cannot run Docker due to missing kernel network privileges. Install Apptainer to use the Singularity backend for sarek:
+
+```bash
+wget https://github.com/apptainer/apptainer/releases/download/v1.4.5/apptainer_1.4.5_amd64.deb
+sudo apt install -y ./apptainer_1.4.5_amd64.deb
+apptainer --version   # verify
+```
 
 ## Install
 

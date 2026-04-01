@@ -58,14 +58,39 @@ python scripts/run_pipeline.py -c my_variant_config.yaml -v
 
 WES/WGS 变异检出见 [docs/guide/variant_pipeline_zh.md](docs/guide/variant_pipeline_zh.md)。Makefile 目标：`make install-sarek`、`make run-sarek INPUT=samplesheet.csv`。**不影响** `make test`（单 Makefile）。
 
-## Docker
+## 容器运行环境
+
+阶段一至四的药物发现流水线**无需容器**，conda 环境直接运行即可。容器仅在运行 nf-core/sarek（变异检测上游）时需要。
+
+### Docker — 本地开发 / 有 Docker 权限的服务器
+
+适用：个人笔记本、Docker Desktop、有 sudo 的云主机。
 
 ```bash
+# 运行 T2Lead 自身镜像
 docker compose build t2lead
 docker compose run --rm t2lead python -m pytest /app/tests -q
+
+# 运行 sarek
+nextflow run nf-core/sarek -profile docker ...
 ```
 
 GPU：取消 [docker-compose.yml](docker-compose.yml) 中 `deploy` 段的注释。默认镜像使用 CPU 版 PyTorch。
+
+### Apptainer (Singularity) — AutoDL / HPC / 受限容器环境
+
+适用：AutoDL 实例、高校 HPC 集群、无法启动 `dockerd` 的任何环境。这些环境通常没有 Docker 所需的内核网络权限（iptables / 虚拟网桥），Apptainer 无需守护进程和网络特权，是 HPC 场景的标准方案。
+
+```bash
+# 安装 Apptainer（Ubuntu 22.04）
+wget https://github.com/apptainer/apptainer/releases/download/v1.4.5/apptainer_1.4.5_amd64.deb
+sudo apt install -y ./apptainer_1.4.5_amd64.deb
+
+# 运行 sarek
+nextflow run nf-core/sarek -profile singularity ...
+```
+
+> **提示**：nf-core 官方同时维护 `-profile docker` 和 `-profile singularity`，两者功能完全等价，仅运行时后端不同。不是每个人都有本地 GPU，使用 AutoDL 等云 GPU 服务器时请选 Singularity 路径。
 
 ## 文档索引
 
