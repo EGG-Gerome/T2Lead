@@ -51,3 +51,6 @@ logs/
 
 # REINVENT4 (cloned by make install; third-party)
 REINVENT4/
+
+# Local package installers (e.g. Apptainer .deb from README quickstart)
+*.deb
