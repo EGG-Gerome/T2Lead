@@ -4,6 +4,21 @@
 
 Assume run root: `<pipeline.out_dir>/<disease_slug>/` when a disease is set, else `<pipeline.out_dir>/`. With `use_stage_subdirs: false`, all stage keys collapse to the same directory.
 
+## Shared ChEMBL library (optional)
+
+When `target_to_hit.shared_library_dir` is set (default in `default_config.yaml`), these files are stored under `<pipeline.out_dir>/<shared_library_dir>/` (not under each disease folder) so multiple diseases reuse one crawl and one Morgan `fp_cache/`:
+
+| File / dir | Description |
+|------------|-------------|
+| `molecules_chemblid_smiles.csv` | Crawled molecules |
+| `activities_ic50.csv` | Crawled IC50 rows |
+| `crawl_state.json` | Resume checkpoint |
+| `fp_cache/` | Morgan fingerprint caches |
+
+Per-disease Stage 2 still holds `dataset_target_ic50.csv`, `model_cache/`, `scored_candidates.csv`, `final_hit_candidates.csv`, etc.
+
+If `shared_library_dir` is empty, legacy layout keeps all of the above inside each run’s `stage2_hits/`.
+
 ## Stage 1 — `stage1_targets/`
 
 | File | Description |
@@ -14,12 +29,12 @@ Assume run root: `<pipeline.out_dir>/<disease_slug>/` when a disease is set, els
 
 | File | Description |
 |------|-------------|
-| `molecules_chemblid_smiles.csv` | Crawled molecules (ChEMBL mode) |
-| `activities_ic50.csv` | Crawled IC50 rows |
-| `crawl_state.json` | Resume checkpoint |
+| `molecules_chemblid_smiles.csv` | Crawled molecules (ChEMBL mode); see **Shared ChEMBL library** if `shared_library_dir` is set |
+| `activities_ic50.csv` | Crawled IC50 rows (same note) |
+| `crawl_state.json` | Resume checkpoint (same note) |
 | `dataset_target_ic50.csv` | Training table |
 | `model_cache/` | Serialized RF / MLP |
-| `fp_cache/` | Morgan caches (under stage 2 when this folder is the crawl root) |
+| `fp_cache/` | Morgan caches (same note; otherwise under `stage2_hits/`) |
 | `scored_candidates.csv` | VS output |
 | `final_hit_candidates.csv` | After ADMET / potency filters |
 

@@ -67,6 +67,9 @@ target_discovery:
 # Stage 2 — Target to Hit  (ChEMBL virtual screening)
 # -------------------------------------------------------------------
 target_to_hit:
+  # Shared ChEMBL molecule + IC50 crawl and Morgan fp_cache across diseases (under pipeline.out_dir).
+  # Empty = legacy: crawl and fp_cache live in each run's stage2_hits/.
+  shared_library_dir: "shared/chembl_stage2"
   target_chembl_id: ""               # leave empty to auto-select from Stage 1
   external_activities_csv: ""        # path to user-supplied IC50 CSV for novel targets
                                      # must have columns: molecule_chembl_id, target_chembl_id,

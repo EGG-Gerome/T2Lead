@@ -37,8 +37,9 @@ python scripts/run_pipeline.py -c my_variant_config.yaml -v
 
 | 目录 | 内容 |
 |------|------|
+| `shared/chembl_stage2/`（默认，见 `target_to_hit.shared_library_dir`） | 跨疾病共用的 ChEMBL 分子/IC50 爬取、`crawl_state.json`、`fp_cache/` |
 | `stage1_targets/` | `ranked_targets.csv` |
-| `stage2_hits/` | ChEMBL 爬取、`model_cache/`、`final_hit_candidates.csv`… |
+| `stage2_hits/` | 该疾病的训练集、`model_cache/`、虚拟筛选与 `final_hit_candidates.csv` 等（爬取与指纹缓存默认在共享目录） |
 | `stage3_leads/` | `final_lead_candidates.csv`、REINVENT4 文件 |
 | `stage4_optimization/` | PDB/PDBQT、`docking_poses/`、`optimized_leads.csv`、MD 轨迹 |
 | `logs/` | 完整日志与精简日志 |

@@ -6,6 +6,7 @@
 # 独立运行流水线某一阶段。
 
 import argparse
+import copy
 import logging
 import os
 import sys
@@ -20,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from drugpipe.config import load_config
 from drugpipe.pipeline import run_hit_to_lead, run_target_discovery, run_target_to_hit
-from drugpipe.paths import STAGE2, run_root_for_config, stage_paths
+from drugpipe.paths import STAGE2, chembl_library_root, run_root_for_config, stage_paths
 
 
 # main 的核心行为与设计意图。
@@ -69,7 +70,17 @@ def main() -> None:
             print(f"  {t['chembl_id']}  {t.get('symbol', '')}  score={t.get('rank_score', t.get('score', 0)):.3f}")
 
     elif args.stage == "target_to_hit":
-        df_hits = run_target_to_hit(cfg, target_chembl_id=args.target)
+        run_root = run_root_for_config(cfg)
+        layout = stage_paths(run_root, cfg)
+        s2_local = layout[STAGE2]
+        library_root = chembl_library_root(cfg, s2_local)
+        cfg_s2 = copy.deepcopy(cfg)
+        cfg_s2.setdefault("pipeline", {})["out_dir"] = str(s2_local)
+        df_hits = run_target_to_hit(
+            cfg_s2,
+            target_chembl_id=args.target,
+            crawl_out_dir=library_root,
+        )
         print(f"\nHit candidates: {len(df_hits)} rows")
         print(df_hits.head(10).to_string(index=False))
 

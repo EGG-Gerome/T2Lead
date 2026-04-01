@@ -23,6 +23,7 @@ from drugpipe.paths import (
     STAGE2,
     STAGE3,
     STAGE4,
+    chembl_library_root,
     disease_slug,
     resolve_variant_stage4_out,
     run_root_for_config,
@@ -432,23 +433,28 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         logger.info("STAGE 2: Target to Hit")
         logger.info("=" * 60)
 
-        crawl_root = layout[STAGE2]
+        s2_local = layout[STAGE2]
+        library_root = chembl_library_root(cfg, s2_local)
+        if library_root != s2_local:
+            logger.info("Shared ChEMBL library + fp_cache: %s", library_root)
+            logger.info("Stage 2 disease-local outputs: %s", s2_local)
+
         if all_targets and "target_discovery" in stages:
             # Crawl first so _pick_viable_target can check actual IC50 counts
-            act_csv = crawl_root / "activities_ic50.csv"
+            act_csv = library_root / "activities_ic50.csv"
             if not act_csv.exists():
                 logger.info("Crawling ChEMBL data before target selection ...")
                 from drugpipe.target_to_hit.chembl_api import ChEMBLCrawler
-                crawler = ChEMBLCrawler(cfg, crawl_root)
+                crawler = ChEMBLCrawler(cfg, library_root)
                 crawler.crawl_molecules()
                 crawler.crawl_activities()
-            target_chembl_id = _pick_viable_target(cfg, all_targets, crawl_root)
+            target_chembl_id = _pick_viable_target(cfg, all_targets, library_root)
 
-        cfg_s2 = _override_out_dir(cfg, crawl_root)
+        cfg_s2 = _override_out_dir(cfg, s2_local)
         df_hits = run_target_to_hit(
             cfg_s2,
             target_chembl_id=target_chembl_id,
-            crawl_out_dir=crawl_root,
+            crawl_out_dir=library_root,
         )
         trainer = df_hits.attrs.get("_trainer")
         featurizer = df_hits.attrs.get("_featurizer")

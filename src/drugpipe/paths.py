@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 def disease_slug(disease: str) -> str:
@@ -87,10 +87,50 @@ def stage_paths(run_root: Path, cfg: Dict[str, Any]) -> Dict[str, Path]:
 
 
 def crawl_and_stage2_dir(cfg: Dict[str, Any]) -> Path:
-    """ChEMBL crawl + Stage 2 artifacts directory.
-    ChEMBL 爬取与阶段二产物所在目录（虚拟筛选、模型缓存等）。
+    """Per-run Stage 2 directory (hits, models, screening outputs).
+
+    When ``target_to_hit.shared_library_dir`` is set, ChEMBL crawl files and
+    ``fp_cache/`` live under :func:`shared_chembl_library_dir` instead; this
+    path still holds disease-local artifacts (``dataset_*``, ``model_cache/``,
+    ``scored_candidates.csv``, …).
+
+    单次运行的阶段二目录。若配置了 ``shared_library_dir``，ChEMBL 与指纹缓存
+    在共享目录；此处仍写疾病/靶点专属产物。
     """
     return stage_paths(run_root_for_config(cfg), cfg)[STAGE2]
+
+
+def shared_chembl_library_dir(cfg: Dict[str, Any]) -> Optional[Path]:
+    """Directory for shared ChEMBL crawl + Morgan ``fp_cache`` (optional).
+
+    If ``target_to_hit.shared_library_dir`` is empty, returns ``None`` (legacy:
+    crawl and fingerprints use ``stage2_hits``).
+
+    Relative paths are resolved under :func:`drugpipe.config.get_out_dir`
+    (pipeline base ``out_dir``, not the per-disease run root).
+
+    跨疾病共享的 ChEMBL 爬取与指纹缓存目录；未配置则返回 ``None``（沿用
+    ``stage2_hits``）。相对路径相对于 ``pipeline.out_dir``。
+    """
+    from drugpipe.config import get_out_dir
+
+    raw = (cfg.get("target_to_hit", {}) or {}).get("shared_library_dir", "") or ""
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    if not p.is_absolute():
+        p = (get_out_dir(cfg) / raw).resolve()
+    else:
+        p = p.resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def chembl_library_root(cfg: Dict[str, Any], stage2_local: Path) -> Path:
+    """Resolve crawl + fp_cache root: shared dir if configured, else *stage2_local*."""
+    shared = shared_chembl_library_dir(cfg)
+    return shared if shared is not None else Path(stage2_local)
 
 
 def resolve_variant_stage4_out(run_root: Path, cfg: Dict[str, Any], gene: str, mutation: str) -> Path:
