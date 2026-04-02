@@ -55,13 +55,6 @@ target_discovery:
     api_url: https://api.platform.opentargets.org/api/v4/graphql
     min_score: 0.1
 
-  origene:
-    enabled: false                   # requires local OriGene deployment:
-                                     #   git clone https://github.com/GENTEL-lab/OriGene
-                                     #   cd OriGene && follow their README to start server
-                                     #   then set enabled: true and server_url below
-    server_url: http://127.0.0.1:8788
-    mode: quick                      # quick | detailed
 
 # -------------------------------------------------------------------
 # Stage 2 — Target to Hit  (ChEMBL virtual screening)

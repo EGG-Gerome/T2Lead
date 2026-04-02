@@ -1,0 +1,55 @@
+# ===================================================================
+# T2Lead — 变异驱动乳腺癌配置（覆盖 default_config.yaml）
+# ===================================================================
+# 使用方法：
+#   cd /root/T2Lead
+#   python scripts/run_pipeline.py -c configs/variant_breast.yaml -v
+#
+# 本文件只写需要覆盖默认值的字段；其余继承 default_config.yaml。
+# ===================================================================
+
+pipeline:
+  # 变异路径只需阶段四；阶段一至三已由之前的疾病路径完成。
+  stages:
+    - lead_optimization
+
+  # AutoDL 大容量挂载盘；stage3_leads/final_lead_candidates.csv 已在此目录下。
+  out_dir: /root/autodl-fs/T2Lead
+
+# disease 字段决定 <out_dir>/<disease_slug>/ 子目录名。
+# "breast cancer" → breast_cancer，与已有的产出目录对齐。
+target_discovery:
+  disease: "breast cancer"
+
+# -------------------------------------------------------------------
+# 变异分析 — 二选一：提供 VCF 或提供 FASTQ
+# -------------------------------------------------------------------
+variant_analysis:
+  enabled: true
+
+  # ── 方案 A：已有 VEP 注释的 VCF（推荐先用这个测试） ──
+  # 把下面的路径改成你的实际 VCF 文件位置，例如：
+  #   vcf_path: "/root/autodl-fs/T2Lead/data/user_inputs/vcf/sample.ann.vcf.gz"
+  vcf_path: ""
+
+  # ── 方案 B：只有原始 FASTQ，交给 Sarek 做变异检测 ──
+  # 需要四条路径（肿瘤 R1/R2 + 正常 R1/R2），vcf_path 留空。
+  # 为什么是四条？因为二代测序是"双端测序"（paired-end）：
+  #   每个样本产出两个文件（R1=正向读段，R2=反向读段），
+  #   肿瘤样本 2 个 + 正常样本 2 个 = 共 4 个 FASTQ 文件。
+  tumor_fastq_r1: ""
+  tumor_fastq_r2: ""
+  normal_fastq_r1: ""
+  normal_fastq_r2: ""
+
+  # 驱动基因过滤：
+  #   [] = 不限制，跑 VCF 里所有蛋白质改变突变（适合"我不知道有什么突变"的情况）
+  #   ["EGFR", "PIK3CA"] = 只保留这些基因的突变（更快，适合已知目标）
+  # 首次运行建议留空 []，让流水线自动发现所有突变，再根据结果决定聚焦哪些。
+  driver_genes: []
+
+  min_impact: "MODERATE"
+
+  sarek:
+    # AutoDL 容器无法运行 Docker 守护进程，改用 singularity（apptainer 兼容）。
+    profile: "singularity"

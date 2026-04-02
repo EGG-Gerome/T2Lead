@@ -122,7 +122,6 @@ T2Lead/
 
 | 阶段 | 参考项目 | 借鉴内容 |
 |------|---------|---------|
-| **阶段一** | [OriGene](https://github.com/GENTEL-lab/OriGene)（GENTEL-lab，CC-BY-NC-SA 4.0） | 多智能体 AI 治疗靶点发现；`origene_client.py` 集成封装 |
 | **阶段一** | [OpenTargets Platform](https://platform.opentargets.org/) | 疾病-靶点关联公共 GraphQL API |
 | **阶段二** | [ChEMBL REST API](https://www.ebi.ac.uk/chembl/) | 公共化合物与生物活性数据库 |
 | **阶段三** | [CReM](https://github.com/DrrDom/crem)（Polishchuk, 2020） | 上下文感知片段替换，类似物枚举 |

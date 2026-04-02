@@ -23,7 +23,7 @@ If `shared_library_dir` is empty, legacy layout keeps all of the above inside ea
 
 | File | Description |
 |------|-------------|
-| `ranked_targets.csv` | Merged / ranked targets from OpenTargets (+ optional OriGene) |
+| `ranked_targets.csv` | Ranked targets from OpenTargets |
 
 ## Stage 2 — `stage2_hits/`
 

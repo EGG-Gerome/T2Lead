@@ -21,7 +21,7 @@
 
 | 文件 | 说明 |
 |------|------|
-| `ranked_targets.csv` | OpenTargets（及可选 OriGene）合并/排序后的靶点 |
+| `ranked_targets.csv` | OpenTargets 排序后的靶点 |
 
 ## 阶段二 — `stage2_hits/`
 
