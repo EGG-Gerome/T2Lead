@@ -138,4 +138,6 @@ T2Lead/
 
 ## 许可证
 
-Apache-2.0 © 2026 hupper
+本仓库为 **hupper 内部商用项目**，默认采用 **All rights reserved**（保留所有权利）。
+
+未经 hupper 书面授权，禁止复制、分发、修改或用于任何公开发布。

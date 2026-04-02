@@ -119,4 +119,6 @@ T2Lead/
 
 ## License
 
-Apache-2.0 © 2026 hupper
+This repository is an **internal commercial project** of hupper and is provided under **All rights reserved** by default.
+
+No copying, redistribution, modification, or public release is permitted without prior written authorization from hupper.
