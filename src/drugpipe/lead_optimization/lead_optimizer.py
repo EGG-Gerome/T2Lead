@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -62,11 +62,17 @@ class LeadOptimizer:
         self.output_csv = out_dir / "optimized_leads.csv"
 
     # ------------------------------------------------------------------
-    def run(self, df_leads: pd.DataFrame) -> pd.DataFrame:
-        """Execute the full lead-optimization pipeline."""
+    def run(self, df_leads: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute the full lead-optimization pipeline.
+
+        Returns
+        -------
+        (optimized_leads, protein_info)
+            *protein_info* is empty when preparation was skipped or stage disabled.
+        """
         if not self.enabled:
             logger.info("Lead optimization stage disabled.")
-            return df_leads
+            return df_leads, {}
 
         logger.info("=== Lead Optimization Step 1: Protein Preparation ===")
         protein_info = self.protein_prep.prepare(self.out_dir)
@@ -90,7 +96,7 @@ class LeadOptimizer:
         df_leads = self.admet.hard_filter(df_leads)
         if df_leads.empty:
             logger.warning("All lead candidates removed by ADMET hard filters.")
-            return df_leads
+            return df_leads, protein_info
 
         logger.info("=== Lead Optimization Step 4: MD Simulation ===")
         if protein_info:
@@ -110,7 +116,7 @@ class LeadOptimizer:
             df_leads = self._rescore_with_explicit(df_leads)
 
         df_out = self._rank_and_output(df_leads)
-        return df_out
+        return df_out, protein_info
 
     # ------------------------------------------------------------------
     def _composite_score(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -136,11 +142,11 @@ class LeadOptimizer:
 
         md_s = df.get("md_binding_energy")
         md_available = md_s is not None and md_s.notna().any()
-        md_norm = self._normalise_lower_better(md_s) if md_available else None
+        md_norm = self._md_binding_abs_norm(md_s) if md_available else None
 
         rmsd_s = df.get("md_rmsd_mean")
         stab_available = rmsd_s is not None and rmsd_s.notna().any()
-        stab_norm = self._normalise_lower_better(rmsd_s) if stab_available else None
+        stab_norm = self._rmsd_abs_norm(rmsd_s) if stab_available else None
 
         components: list[tuple[float, pd.Series]] = []
         if cyp_norm is not None:
@@ -167,9 +173,31 @@ class LeadOptimizer:
         return df
 
     @staticmethod
+    def _clip01_series(s: pd.Series) -> pd.Series:
+        return s.clip(lower=0.0, upper=1.0)
+
+    @staticmethod
+    def _dock_score_abs_norm(s: pd.Series) -> pd.Series:
+        """kcal/mol: more negative is better. Maps roughly [-10, -4] → [1, 0]."""
+        v = pd.to_numeric(s, errors="coerce").astype(float)
+        return LeadOptimizer._clip01_series((-v - 4.0) / 6.0)
+
+    @staticmethod
+    def _md_binding_abs_norm(s: pd.Series) -> pd.Series:
+        """kcal/mol: more negative is better. Maps roughly [-80, 0] → [1, 0]; +ΔG → 0."""
+        v = pd.to_numeric(s, errors="coerce").astype(float)
+        return LeadOptimizer._clip01_series((-v) / 80.0)
+
+    @staticmethod
+    def _rmsd_abs_norm(s: pd.Series) -> pd.Series:
+        """Å: lower is better. Maps roughly [0, 15] → [1, 0]."""
+        v = pd.to_numeric(s, errors="coerce").astype(float)
+        return LeadOptimizer._clip01_series((15.0 - v) / 15.0)
+
+    @staticmethod
     def _normalise_lower_better(s: Optional[pd.Series]) -> pd.Series:
         """Min-max normalise where *lower* raw values → *higher* normalised
-        scores (closer to 1.0)."""
+        scores (closer to 1.0).  Used for explicit-solvent drift tie-break only."""
         if s is None or s.isna().all():
             return pd.Series(0.5, index=s.index if s is not None else pd.RangeIndex(0))
         filled = s.fillna(s.max() if s.max() == s.max() else 0)

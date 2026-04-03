@@ -32,6 +32,9 @@ variant_analysis:
   normal_fastq_r2: ""
   driver_genes: []                   # restrict to specific genes (empty = all)
   min_impact: "MODERATE"             # VEP IMPACT filter: HIGH, MODERATE, LOW
+  auto_stage23: false                # true = auto-run Stage 2-3 per variant gene
+                                     # (gene → ChEMBL target → screen → lead gen → dock)
+                                     # false = reuse existing stage3_leads/final_lead_candidates.csv
   prefer_experimental_structure: true
   api_timeout_s: 30
 
@@ -155,7 +158,13 @@ hit_to_lead:
 # -------------------------------------------------------------------
 lead_optimization:
   enabled: true
-  pdb_id: "4JPS"                      # RCSB PDB ID for target protein (PIK3CA / PI3Kα for breast cancer)
+  pdb_id: "4JPS"                      # fallback PDB if no target-specific mapping hits
+  auto_target_pdb:
+    enabled: true
+    override_config_pdb: true         # true = mapped target PDB overrides static pdb_id above
+    chembl_to_pdb:
+      CHEMBL203: "1M17"               # EGFR
+      CHEMBL4005: "4JPS"              # PIK3CA / PI3Kalpha
   protein_sequence: ""                 # amino acid sequence; if pdb_id is empty, ESMFold API
                                        # predicts a 3D structure from this sequence automatically
   binding_site:
@@ -219,3 +228,28 @@ lead_optimization:
 
   output:
     top_n_optimized: 10
+
+# -------------------------------------------------------------------
+# Benchmark — approved / late-clinical drugs vs same scoring + MD as leads
+# -------------------------------------------------------------------
+benchmark:
+  enabled: true
+  max_drugs: 5
+  min_phase: 3              # 3 = Phase III+, 4 = approved only
+  chembl_base_url: ""        # empty = use target_to_hit.chembl.base_url
+  run_docking: true          # benchmark references should be docked when receptor is available
+  docking_exhaustiveness: 32 # same quality as Stage-4 for fair comparison
+  docking_n_poses: 1
+  run_md: true               # run MD for benchmark drugs for apples-to-apples comparison
+  md_top_n: 99               # effectively "all" — run MD for every benchmark drug
+  md_ensemble_enabled: true
+  md_ensemble_n_runs: 1
+  md_equilibration_ps: 20
+  md_production_ps: 50
+  md_sample_interval_ps: 5
+
+# -------------------------------------------------------------------
+# Report — auto-generated bilingual dashboard.html after Stage 4
+# -------------------------------------------------------------------
+report:
+  enabled: true

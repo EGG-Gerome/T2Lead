@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -159,13 +160,17 @@ def run_target_to_hit(
         crawler = ChEMBLCrawler(cfg, shared_dir)
         mol_csv = crawler.crawl_molecules()
 
+    # Shared cache roots (independent of target ID, dependent on molecule list).
+    fp_cache_dir = shared_dir / "fp_cache"
+    props_cache_dir = shared_dir / "prop_cache"
+
     # --- Docking-only mode: skip ML, filter by drug-likeness only ---
     if docking_only:
         logger.info("Docking-only mode: skipping ML model training.")
         logger.info("Candidates will be selected by drug-likeness (QED + ADMET rules).")
         df_mol = pd.read_csv(mol_csv).dropna(subset=["canonical_smiles"]).drop_duplicates("molecule_chembl_id")
         filt = ADMETFilter(cfg, out_dir)
-        screener = VirtualScreener(cfg, out_dir)
+        screener = VirtualScreener(cfg, out_dir, props_cache_dir=props_cache_dir)
         screener._add_properties(df_mol)
         df_mol["pred_pIC50_ens"] = np.nan
         df_mol["pred_IC50_nM_ens"] = np.nan
@@ -182,7 +187,6 @@ def run_target_to_hit(
         act_csv = crawler.crawl_activities()
 
     # --- ML-based screening pipeline ---
-    fp_cache_dir = shared_dir / "fp_cache"
     builder = DatasetBuilder(cfg, out_dir)
     df_ds = builder.build(mol_csv, act_csv, tid)
 
@@ -196,7 +200,12 @@ def run_target_to_hit(
     logger.info("Training metrics: %s", metrics)
 
     df_mol = pd.read_csv(mol_csv).dropna(subset=["canonical_smiles"]).drop_duplicates("molecule_chembl_id")
-    screener = VirtualScreener(cfg, out_dir, fp_cache_dir=fp_cache_dir)
+    screener = VirtualScreener(
+        cfg,
+        out_dir,
+        fp_cache_dir=fp_cache_dir,
+        props_cache_dir=props_cache_dir,
+    )
     df_scored = screener.run(df_mol, trainer)
 
     filt = ADMETFilter(cfg, out_dir)
@@ -271,18 +280,172 @@ def run_hit_to_lead(
 def run_lead_optimization(
     cfg: Dict[str, Any],
     df_leads: pd.DataFrame,
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """Stage 4 - protein prep, docking, ADMET, MD and final ranking.
     阶段 4：蛋白准备、对接、ADMET、MD 评估与最终排序。
+
+    Returns
+    -------
+    (df_optimized, protein_info)
     """
     from drugpipe.lead_optimization.lead_optimizer import LeadOptimizer
 
     out_dir = get_out_dir(cfg)
     optimizer = LeadOptimizer(cfg, out_dir)
-    df_optimized = optimizer.run(df_leads)
+    df_optimized, protein_info = optimizer.run(df_leads)
 
     logger.info("Stage 4 complete — %d optimized lead candidates.", len(df_optimized))
-    return df_optimized
+    return df_optimized, protein_info
+
+
+def _resolve_target_chembl_id(
+    cfg: Dict[str, Any],
+    layout: Dict[str, Path],
+    current: Optional[str],
+) -> Optional[str]:
+    """Best-effort ChEMBL target id for benchmark / reporting."""
+    if current and str(current).strip():
+        return str(current).strip()
+
+    # Prefer the actual Stage-2 selected target from the latest complete log.
+    try:
+        from drugpipe.report.log_parser import find_latest_full_log
+
+        logs_dir = layout.get("logs")
+        log_path = find_latest_full_log(logs_dir) if isinstance(logs_dir, Path) else None
+        if log_path and log_path.is_file():
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+            m = re.search(r"Selected target\s+(CHEMBL\d+)\s+\(([^)]+)\)", text)
+            if m:
+                return str(m.group(1))
+    except Exception:
+        pass
+
+    raw = (cfg.get("target_to_hit", {}) or {}).get("target_chembl_id", "") or ""
+    raw = str(raw).strip()
+    if raw:
+        return raw
+    ranked = layout[STAGE1] / "ranked_targets.csv"
+    if ranked.is_file():
+        try:
+            df = pd.read_csv(ranked)
+            if not df.empty and "chembl_id" in df.columns:
+                return str(df.iloc[0]["chembl_id"])
+        except Exception:
+            pass
+    return None
+
+
+def _resolve_target_symbol(
+    layout: Dict[str, Path],
+    target_chembl_id: Optional[str],
+) -> Optional[str]:
+    """Best-effort gene symbol for a resolved target_chembl_id."""
+    tid = str(target_chembl_id or "").strip()
+    if not tid:
+        return None
+    ranked = layout[STAGE1] / "ranked_targets.csv"
+    if ranked.is_file():
+        try:
+            df = pd.read_csv(ranked)
+            if not df.empty and {"chembl_id", "symbol"}.issubset(df.columns):
+                hit = df[df["chembl_id"].astype(str) == tid]
+                if not hit.empty:
+                    sym = str(hit.iloc[0]["symbol"]).strip()
+                    return sym or None
+        except Exception:
+            pass
+    return None
+
+
+def _apply_target_specific_stage4_pdb(
+    cfg: Dict[str, Any],
+    layout: Dict[str, Path],
+    target_chembl_id: Optional[str],
+) -> Dict[str, Any]:
+    """Override Stage-4 receptor PDB by selected target when configured."""
+    lo = cfg.setdefault("lead_optimization", {})
+    # Variant mutant structure path takes precedence; never override it.
+    if lo.get("_mutant_pdb_path"):
+        return cfg
+
+    auto = lo.get("auto_target_pdb", {}) or {}
+    if not bool(auto.get("enabled", True)):
+        return cfg
+
+    tid = _resolve_target_chembl_id(cfg, layout, target_chembl_id)
+    if not tid:
+        return cfg
+
+    mapping = auto.get("chembl_to_pdb", {}) or {}
+    mapped = str(mapping.get(tid, "") or "").strip()
+    if not mapped:
+        return cfg
+
+    current = str(lo.get("pdb_id", "") or "").strip()
+    override = bool(auto.get("override_config_pdb", True))
+    if current and not override:
+        return cfg
+
+    if current and current.upper() != mapped.upper():
+        logger.warning(
+            "Stage 4 receptor mismatch fixed: target %s mapped to PDB %s (was %s).",
+            tid,
+            mapped,
+            current,
+        )
+    elif not current:
+        logger.info("Stage 4 receptor auto-selected: target %s -> PDB %s.", tid, mapped)
+
+    lo["pdb_id"] = mapped
+    # Ensure we actually use the mapped PDB and not a stale sequence fallback.
+    lo["protein_sequence"] = ""
+    sym = _resolve_target_symbol(layout, tid)
+    if sym:
+        logger.info("Target context for Stage 4: %s (%s)", tid, sym)
+    return cfg
+
+
+def _run_post_stage4(
+    cfg: Dict[str, Any],
+    run_out_dir: Path,
+    layout: Dict[str, Path],
+    target_chembl_id: Optional[str],
+    protein_info: Dict[str, Any],
+    trainer: Any,
+    featurizer: Any,
+    stage4_dir: Optional[Path] = None,
+) -> None:
+    """Benchmark reference drugs + write ``dashboard.html`` under *run_out_dir*."""
+    s4 = stage4_dir if stage4_dir is not None else layout[STAGE4]
+    tid = _resolve_target_chembl_id(cfg, layout, target_chembl_id)
+    predict_fn = trainer.predict if trainer is not None and hasattr(trainer, "predict") else None
+    feat_fn = featurizer.transform if featurizer is not None and hasattr(featurizer, "transform") else None
+
+    bm_cfg = cfg.get("benchmark", {}) or {}
+    if bm_cfg.get("enabled", True):
+        try:
+            from drugpipe.benchmark import run_benchmark
+
+            run_benchmark(
+                cfg,
+                tid,
+                protein_info or {},
+                s4,
+                model_predict_fn=predict_fn,
+                featurizer_fn=feat_fn,
+            )
+        except Exception as exc:
+            logger.warning("Benchmark step failed: %s", exc, exc_info=True)
+
+    rep_cfg = cfg.get("report", {}) or {}
+    if rep_cfg.get("enabled", True):
+        try:
+            from drugpipe.report import generate_report
+
+            generate_report(cfg, run_out_dir, layout, stage4_dir=s4)
+        except Exception as exc:
+            logger.warning("Report generation failed: %s", exc, exc_info=True)
 
 
 # ======================================================================
@@ -347,6 +510,65 @@ def _run_variant_analysis(cfg: Dict[str, Any], out_dir: Path) -> List[Dict[str, 
     return structures
 
 
+def _auto_stage23_for_gene(
+    cfg: Dict[str, Any],
+    gene_symbol: str,
+    variant_out: Path,
+    layout: Dict[str, Path],
+) -> Optional[pd.DataFrame]:
+    """Run Stage 2-3 for a single gene discovered from VCF.
+    为 VCF 中发现的单个基因自动运行 Stage 2-3，生成该靶点专属的先导分子。
+
+    Returns a DataFrame of leads, or *None* if the gene cannot be mapped
+    to a ChEMBL target or Stage 2-3 fails.
+    """
+    from drugpipe.target_to_hit.chembl_api import resolve_chembl_target_by_gene
+
+    logger.info("=" * 60)
+    logger.info("AUTO STAGE 2-3 for gene: %s", gene_symbol)
+    logger.info("=" * 60)
+
+    chembl_base = cfg.get("target_to_hit", {}).get("chembl", {}).get(
+        "base_url", "https://www.ebi.ac.uk/chembl/api/data",
+    )
+    target_id = resolve_chembl_target_by_gene(gene_symbol, chembl_base)
+    if not target_id:
+        logger.warning("Cannot map gene %s to ChEMBL target; skipping auto Stage 2-3.", gene_symbol)
+        return None
+
+    s2_dir = variant_out / "stage2_hits"
+    s2_dir.mkdir(parents=True, exist_ok=True)
+    s3_dir = variant_out / "stage3_leads"
+    s3_dir.mkdir(parents=True, exist_ok=True)
+
+    library_root = chembl_library_root(cfg, s2_dir)
+
+    try:
+        cfg_s2 = _override_out_dir(cfg, s2_dir)
+        df_hits = run_target_to_hit(
+            cfg_s2, target_chembl_id=target_id, crawl_out_dir=library_root,
+        )
+        trainer = df_hits.attrs.get("_trainer")
+        featurizer = df_hits.attrs.get("_featurizer")
+
+        cfg_s3 = _override_out_dir(cfg, s3_dir)
+        predict_fn = trainer.predict if trainer else None
+        feat_fn = featurizer.transform if featurizer else None
+        df_leads = run_hit_to_lead(
+            cfg_s3, df_hits, model_predict_fn=predict_fn, featurizer_fn=feat_fn,
+        )
+
+        logger.info(
+            "Auto Stage 2-3 for %s (%s) complete — %d leads generated.",
+            gene_symbol, target_id, len(df_leads),
+        )
+        return df_leads
+
+    except Exception as exc:
+        logger.error("Auto Stage 2-3 failed for gene %s: %s", gene_symbol, exc)
+        return None
+
+
 def run_pipeline(cfg: Dict[str, Any]) -> None:
     """Execute stages listed in `pipeline.stages` with shared state handoff.
     按 `pipeline.stages` 顺序执行各阶段，并在阶段间传递中间结果。
@@ -378,30 +600,67 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
         if mutant_structures:
             logger.info("Variant analysis produced %d mutant structures.", len(mutant_structures))
             if "lead_optimization" in stages:
-                leads_csv = layout[STAGE3] / "final_lead_candidates.csv"
-                if not leads_csv.exists():
-                    logger.error(
-                        "Variant-driven Stage 4 requires lead candidates at %s "
-                        "(run Stages 2–3 first or copy a lead CSV there).",
-                        leads_csv,
-                    )
-                    return
-                df_vcf_leads = pd.read_csv(leads_csv)
-                logger.info("Loaded %d leads from %s", len(df_vcf_leads), leads_csv)
+                auto_s23 = va_cfg.get("auto_stage23", False)
                 for ms in mutant_structures:
-                    logger.info(
-                        "Running Stage 4 against %s %s (%s)",
-                        ms["gene"], ms["mutation"], ms["method"],
-                    )
+                    gene = str(ms["gene"])
+                    mutation = str(ms["mutation"])
                     s4_out = resolve_variant_stage4_out(
-                        run_out_dir, cfg, str(ms["gene"]), str(ms["mutation"]),
+                        run_out_dir, cfg, gene, mutation,
+                    )
+
+                    if auto_s23:
+                        df_gene_leads = _auto_stage23_for_gene(
+                            cfg, gene, s4_out, layout,
+                        )
+                    else:
+                        df_gene_leads = None
+
+                    if df_gene_leads is None or df_gene_leads.empty:
+                        leads_csv = layout[STAGE3] / "final_lead_candidates.csv"
+                        if not leads_csv.exists():
+                            logger.error(
+                                "Stage 4 for %s %s requires lead candidates at %s "
+                                "(enable auto_stage23, run Stages 2–3 first, "
+                                "or copy a lead CSV there).",
+                                gene, mutation, leads_csv,
+                            )
+                            continue
+                        df_gene_leads = pd.read_csv(leads_csv)
+                        if auto_s23:
+                            logger.warning(
+                                "Auto Stage 2-3 failed for %s; falling back to %s",
+                                gene, leads_csv,
+                            )
+                        logger.info("Loaded %d leads from %s", len(df_gene_leads), leads_csv)
+
+                    logger.info(
+                        "Running Stage 4 against %s %s (%s) with %d leads",
+                        gene, mutation, ms["method"], len(df_gene_leads),
                     )
                     cfg_mut = _override_out_dir(cfg, s4_out)
                     lo = cfg_mut.setdefault("lead_optimization", {})
                     lo["pdb_id"] = ""
                     lo["protein_sequence"] = ""
                     lo["_mutant_pdb_path"] = ms["pdb_path"]
-                    run_lead_optimization(cfg_mut, df_vcf_leads)
+                    _df_opt, protein_info = run_lead_optimization(cfg_mut, df_gene_leads)
+                    from drugpipe.target_to_hit.chembl_api import resolve_chembl_target_by_gene
+
+                    chembl_base = (
+                        cfg_mut.get("target_to_hit", {})
+                        .get("chembl", {})
+                        .get("base_url", "https://www.ebi.ac.uk/chembl/api/data")
+                    )
+                    tid_v = resolve_chembl_target_by_gene(gene, chembl_base)
+                    _run_post_stage4(
+                        cfg_mut,
+                        run_out_dir,
+                        layout,
+                        tid_v,
+                        protein_info,
+                        None,
+                        None,
+                        stage4_dir=s4_out,
+                    )
             logger.info("=" * 60)
             logger.info("VARIANT-DRIVEN PIPELINE COMPLETE")
             logger.info("=" * 60)
@@ -493,7 +752,18 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
                 return
 
         cfg_s4 = _override_out_dir(cfg, layout[STAGE4])
-        run_lead_optimization(cfg_s4, df_leads)
+        cfg_s4 = _apply_target_specific_stage4_pdb(cfg_s4, layout, target_chembl_id)
+        _df_opt, protein_info = run_lead_optimization(cfg_s4, df_leads)
+        _run_post_stage4(
+            cfg_s4,
+            run_out_dir,
+            layout,
+            target_chembl_id,
+            protein_info,
+            trainer,
+            featurizer,
+            stage4_dir=layout[STAGE4],
+        )
 
     logger.info("=" * 60)
     logger.info("PIPELINE COMPLETE")
@@ -556,6 +826,16 @@ def main() -> None:
         help="Path to user-supplied SMILES library CSV for screening.",
     )
     parser.add_argument(
+        "--vcf-path",
+        default=None,
+        help="VEP-annotated VCF path (enables variant_analysis automatically).",
+    )
+    parser.add_argument(
+        "--auto-stage23",
+        action="store_true",
+        help="Auto-run Stage 2-3 per variant gene (gene → ChEMBL → screen → leads).",
+    )
+    parser.add_argument(
         "--docking-only",
         action="store_true",
         help="Skip ML model, use docking scores only (for targets with no IC50 data).",
@@ -589,6 +869,12 @@ def main() -> None:
         overrides.setdefault("target_to_hit", {})["external_activities_csv"] = args.activities_csv
     if args.screening_library:
         overrides.setdefault("target_to_hit", {})["screening_library_csv"] = args.screening_library
+    if args.vcf_path:
+        va = overrides.setdefault("variant_analysis", {})
+        va["enabled"] = True
+        va["vcf_path"] = args.vcf_path
+    if args.auto_stage23:
+        overrides.setdefault("variant_analysis", {})["auto_stage23"] = True
     if args.docking_only:
         overrides.setdefault("target_to_hit", {})["docking_only"] = True
     if args.protein_sequence:

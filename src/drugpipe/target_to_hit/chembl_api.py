@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -16,6 +16,64 @@ from drugpipe.utils.http import HTTPClient
 from drugpipe.utils.io import append_csv, load_state, save_state
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_chembl_target_by_gene(
+    gene_symbol: str,
+    base_url: str = "https://www.ebi.ac.uk/chembl/api/data",
+) -> Optional[str]:
+    """Look up a single-protein ChEMBL target ID by gene symbol.
+    通过基因符号查询 ChEMBL 单蛋白靶点 ID（人源优先）。
+
+    Returns the best-matching ``CHEMBLXXX`` target ID, or *None* if no
+    human single-protein target is found for *gene_symbol*.
+    """
+    from drugpipe.utils.http import HTTPClient
+
+    http = HTTPClient(timeout=30, retries=4, polite_sleep=0.1)
+    url = f"{base_url}/target/search.json"
+    try:
+        data = http.get_json(url, {"q": gene_symbol, "limit": 20})
+    except Exception as exc:
+        logger.warning("ChEMBL target search failed for %s: %s", gene_symbol, exc)
+        return None
+
+    targets = data.get("targets") or data.get("target") or []
+    gene_upper = gene_symbol.upper()
+
+    for t in targets:
+        if t.get("target_type") != "SINGLE PROTEIN":
+            continue
+        org = (t.get("organism") or "").lower()
+        if "homo sapiens" not in org:
+            continue
+        components = t.get("target_components") or []
+        for comp in components:
+            synonyms = comp.get("target_component_synonyms") or []
+            for syn in synonyms:
+                if (syn.get("component_synonym") or "").upper() == gene_upper:
+                    tid = t.get("target_chembl_id")
+                    logger.info(
+                        "Gene %s → ChEMBL target %s (%s)",
+                        gene_symbol, tid, t.get("pref_name", ""),
+                    )
+                    return tid
+
+    if targets:
+        for t in targets:
+            if t.get("target_type") != "SINGLE PROTEIN":
+                continue
+            pref = (t.get("pref_name") or "").upper()
+            if gene_upper in pref:
+                tid = t.get("target_chembl_id")
+                logger.info(
+                    "Gene %s → ChEMBL target %s (name match: %s)",
+                    gene_symbol, tid, t.get("pref_name", ""),
+                )
+                return tid
+
+    logger.warning("No ChEMBL SINGLE PROTEIN target found for gene %s", gene_symbol)
+    return None
 
 
 class ChEMBLCrawler:

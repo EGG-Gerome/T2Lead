@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 _RCSB_SEARCH_API = "https://search.rcsb.org/rcsbsearch/v2/query"
 _RCSB_DATA_API = "https://data.rcsb.org/rest/v1/core"
 _ESMFOLD_API = "https://api.esmatlas.com/foldSequence/v1/pdb/"
+_ALPHAFOLD_PDB_URL = "https://alphafold.ebi.ac.uk/files/AF-{uniprot}-F1-model_v4.pdb"
 
 
 class StructureBridge:
@@ -36,7 +37,7 @@ class StructureBridge:
         va = (cfg or {}).get("variant_analysis", {})
         self._timeout = int(va.get("api_timeout_s", 30))
         self._prefer_experimental = bool(va.get("prefer_experimental_structure", True))
-        self._pdb_cache: Dict[str, Optional[str]] = {}
+        self._pdb_cache: Dict[str, List[str]] = {}
 
     def resolve_structures(
         self,
@@ -68,10 +69,10 @@ class StructureBridge:
         label = mp.mutation_label
 
         if self._prefer_experimental:
-            pdb_id = self._find_experimental_pdb(gene, mp.uniprot_id)
-            if pdb_id:
+            pdb_ids = self._find_experimental_pdbs(gene, mp.uniprot_id)
+            for pdb_id in pdb_ids:
                 logger.info(
-                    "%s %s: experimental PDB %s found — will apply point mutation.",
+                    "%s %s: trying experimental PDB %s (will apply point mutation).",
                     gene, label, pdb_id,
                 )
                 pdb_path = self._download_pdb(pdb_id, out_dir)
@@ -84,6 +85,24 @@ class StructureBridge:
                         "base_pdb_id": pdb_id,
                         "mutant_protein": mp,
                     }
+            if pdb_ids:
+                logger.warning(
+                    "%s %s: all candidate experimental PDB downloads failed (%s).",
+                    gene, label, ", ".join(pdb_ids[:5]),
+                )
+
+        # ESMFold public API rejects many long proteins (413); use AlphaFold DB
+        # wildtype model as a robust fallback for long sequences.
+        if len(mp.mutant_sequence) > 400 and mp.uniprot_id:
+            af_path = self._download_alphafold(mp.uniprot_id, out_dir)
+            if af_path:
+                return {
+                    "gene": gene,
+                    "mutation": label,
+                    "pdb_path": str(af_path),
+                    "method": f"alphafold_db_wildtype({mp.uniprot_id})",
+                    "mutant_protein": mp,
+                }
 
         pdb_path = self._predict_esmfold(mp, out_dir)
         if pdb_path:
@@ -95,28 +114,47 @@ class StructureBridge:
                 "mutant_protein": mp,
             }
 
+        if mp.uniprot_id:
+            af_path = self._download_alphafold(mp.uniprot_id, out_dir)
+            if af_path:
+                return {
+                    "gene": gene,
+                    "mutation": label,
+                    "pdb_path": str(af_path),
+                    "method": f"alphafold_db_wildtype({mp.uniprot_id})",
+                    "mutant_protein": mp,
+                }
+
         logger.warning("No structure resolved for %s %s", gene, label)
         return None
 
-    def _find_experimental_pdb(
+    def _find_experimental_pdbs(
         self, gene_symbol: str, uniprot_id: Optional[str],
-    ) -> Optional[str]:
-        """Query RCSB for an experimental structure matching this gene/protein."""
+    ) -> List[str]:
+        """Query RCSB for candidate experimental structures."""
         cache_key = uniprot_id or gene_symbol
         if cache_key in self._pdb_cache:
             return self._pdb_cache[cache_key]
 
-        pdb_id = None
+        pdb_ids: List[str] = []
 
         if uniprot_id:
-            pdb_id = self._rcsb_search_by_uniprot(uniprot_id)
-        if not pdb_id:
-            pdb_id = self._rcsb_search_by_gene(gene_symbol)
+            pdb_ids.extend(self._rcsb_search_by_uniprot(uniprot_id))
+        if not pdb_ids:
+            pdb_ids.extend(self._rcsb_search_by_gene(gene_symbol))
 
-        self._pdb_cache[cache_key] = pdb_id
-        return pdb_id
+        # De-duplicate while preserving order.
+        seen = set()
+        uniq: List[str] = []
+        for pid in pdb_ids:
+            if pid and pid not in seen:
+                seen.add(pid)
+                uniq.append(pid)
 
-    def _rcsb_search_by_uniprot(self, uniprot_id: str) -> Optional[str]:
+        self._pdb_cache[cache_key] = uniq
+        return uniq
+
+    def _rcsb_search_by_uniprot(self, uniprot_id: str) -> List[str]:
         """Search RCSB by UniProt accession, prefer highest resolution X-ray."""
         query = {
             "query": {
@@ -132,12 +170,12 @@ class StructureBridge:
             "return_type": "entry",
             "request_options": {
                 "sort": [{"sort_by": "rcsb_entry_info.resolution_combined", "direction": "asc"}],
-                "paginate": {"start": 0, "rows": 1},
+                "paginate": {"start": 0, "rows": 10},
             },
         }
         return self._run_rcsb_search(query)
 
-    def _rcsb_search_by_gene(self, gene_symbol: str) -> Optional[str]:
+    def _rcsb_search_by_gene(self, gene_symbol: str) -> List[str]:
         """Search RCSB by gene name, human organism, best resolution."""
         query = {
             "query": {
@@ -167,30 +205,28 @@ class StructureBridge:
             "return_type": "entry",
             "request_options": {
                 "sort": [{"sort_by": "rcsb_entry_info.resolution_combined", "direction": "asc"}],
-                "paginate": {"start": 0, "rows": 1},
+                "paginate": {"start": 0, "rows": 10},
             },
         }
         return self._run_rcsb_search(query)
 
-    def _run_rcsb_search(self, query: dict) -> Optional[str]:
-        """Execute an RCSB search query and return the first PDB ID."""
+    def _run_rcsb_search(self, query: dict) -> List[str]:
+        """Execute an RCSB search query and return candidate PDB IDs."""
         try:
-            import json
             resp = requests.post(
                 _RCSB_SEARCH_API,
                 json=query,
                 timeout=self._timeout,
             )
             if resp.status_code == 204:
-                return None
+                return []
             resp.raise_for_status()
             data = resp.json()
             results = data.get("result_set", [])
-            if results:
-                return results[0].get("identifier")
+            return [r.get("identifier") for r in results if r.get("identifier")]
         except Exception as exc:
             logger.debug("RCSB search failed: %s", exc)
-        return None
+        return []
 
     def _download_pdb(self, pdb_id: str, out_dir: Path) -> Optional[Path]:
         """Download a PDB file from RCSB."""
@@ -206,6 +242,25 @@ class StructureBridge:
             return pdb_path
         except Exception as exc:
             logger.warning("PDB download failed for %s: %s", pdb_id, exc)
+            return None
+
+    def _download_alphafold(self, uniprot_id: str, out_dir: Path) -> Optional[Path]:
+        """Download AlphaFold DB wildtype model by UniProt ID."""
+        pdb_path = out_dir / f"af_{uniprot_id.lower()}.pdb"
+        if pdb_path.exists():
+            return pdb_path
+        try:
+            url = _ALPHAFOLD_PDB_URL.format(uniprot=uniprot_id)
+            resp = requests.get(url, timeout=self._timeout)
+            resp.raise_for_status()
+            if "ATOM" not in resp.text:
+                logger.warning("AlphaFold DB returned invalid PDB for %s", uniprot_id)
+                return None
+            pdb_path.write_text(resp.text)
+            logger.info("Downloaded AlphaFold DB model %s → %s", uniprot_id, pdb_path)
+            return pdb_path
+        except Exception as exc:
+            logger.warning("AlphaFold DB download failed for %s: %s", uniprot_id, exc)
             return None
 
     def _predict_esmfold(self, mp: MutantProtein, out_dir: Path) -> Optional[Path]:

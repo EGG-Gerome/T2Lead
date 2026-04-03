@@ -6,9 +6,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
-from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,14 +29,31 @@ from drugpipe.utils.chem import (
 logger = logging.getLogger(__name__)
 
 
+def _props_cache_key(smiles_list: List[str]) -> str:
+    """Deterministic hash for molecular-property cache."""
+    h = hashlib.sha256()
+    h.update(f"props_v1,len={len(smiles_list)}\n".encode())
+    for smi in smiles_list:
+        h.update(smi.encode())
+        h.update(b"\n")
+    return h.hexdigest()[:16]
+
+
 class VirtualScreener:
     """Score all molecules with the trained pIC50 model and compute properties."""
     # 用训练好的 pIC50 模型对所有分子打分并计算性质。
 
-    def __init__(self, cfg: Dict[str, Any], out_dir: Path, fp_cache_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        cfg: Dict[str, Any],
+        out_dir: Path,
+        fp_cache_dir: Optional[Path] = None,
+        props_cache_dir: Optional[Path] = None,
+    ):
         self.out_dir = out_dir
         self.scored_csv = out_dir / "scored_candidates.csv"
         self.featurizer = MorganFeaturizer(cfg, cache_dir=fp_cache_dir)
+        self.props_cache_dir = props_cache_dir
 
     # ------------------------------------------------------------------
     def run(
@@ -85,9 +102,15 @@ class VirtualScreener:
         return out
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _add_properties(df: pd.DataFrame) -> None:
+    def _add_properties(self, df: pd.DataFrame) -> None:
         smiles_list = df["canonical_smiles"].tolist()
+        cached = self._load_props_cache(smiles_list)
+        if cached is not None:
+            for k, v in cached.items():
+                df[k] = v
+            logger.info("Loaded cached molecular properties (%d molecules).", len(smiles_list))
+            return
+
         n_workers = min(os.cpu_count() or 1, 16)
 
         logger.info("Computing molecular properties (%d molecules, %d workers) ...",
@@ -114,6 +137,55 @@ class VirtualScreener:
         df["HasAlert"] = alerts
         for k, v in desc_cols.items():
             df[k] = v
+
+        self._save_props_cache(
+            smiles_list,
+            {
+                "QED": np.asarray(qeds, dtype=np.float32),
+                "HasAlert": np.asarray(alerts, dtype=np.bool_),
+                **{k: np.asarray(v, dtype=np.float32) for k, v in desc_cols.items()},
+            },
+        )
+
+    def _props_cache_path(self, smiles_list: List[str]) -> Optional[Path]:
+        if self.props_cache_dir is None:
+            return None
+        key = _props_cache_key(smiles_list)
+        return self.props_cache_dir / f"molprops_{key}.npz"
+
+    def _load_props_cache(self, smiles_list: List[str]) -> Optional[Dict[str, np.ndarray]]:
+        path = self._props_cache_path(smiles_list)
+        if path is None or not path.exists():
+            return None
+        cols = ["QED", "HasAlert", "MW", "cLogP", "TPSA", "HBD", "HBA", "RotB", "Rings", "HeavyAtoms"]
+        try:
+            data = np.load(path, allow_pickle=False)
+            out: Dict[str, np.ndarray] = {}
+            for c in cols:
+                if c not in data:
+                    logger.warning("Property cache missing column %s, recomputing.", c)
+                    return None
+                arr = np.array(data[c])
+                if arr.shape[0] != len(smiles_list):
+                    logger.warning("Property cache length mismatch, recomputing.")
+                    return None
+                out[c] = arr
+            return out
+        except Exception as exc:
+            logger.warning("Failed to load property cache %s: %s", path.name, exc)
+            return None
+
+    def _save_props_cache(self, smiles_list: List[str], cols: Dict[str, np.ndarray]) -> None:
+        path = self._props_cache_path(smiles_list)
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(path, **cols)
+            size_mb = path.stat().st_size / (1024 * 1024)
+            logger.info("Saved molecular-property cache: %s (%.1f MB)", path.name, size_mb)
+        except Exception as exc:
+            logger.warning("Failed to save property cache: %s", exc)
 
 
 def _compute_props_single(smi: str) -> Tuple[float, bool, Dict[str, Any]]:
