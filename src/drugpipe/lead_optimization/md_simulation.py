@@ -23,6 +23,7 @@ Optional:
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import tempfile
 import traceback
@@ -134,9 +135,10 @@ class _ComplexState:
     heavy_mask: np.ndarray  # bool, shape (n_lig_atoms,)
     lig_topology: Any  # ligand-only OpenMM Topology (heavy + H)
     min_positions: Any  # OpenMM positions after minimize (full complex)
-    rec_simulation: Any = None  # receptor-only Simulation (for per-frame E_receptor)
-    lig_simulation: Any = None  # ligand-only Simulation (for per-frame E_ligand)
+    rec_simulation: Any = None  # (legacy, unused with parameter-offset method)
+    lig_simulation: Any = None  # (legacy, unused with parameter-offset method)
     restraint_force_group: Optional[int] = None  # excluded from ΔG if present
+    nb_force_group: int = 0  # force group of the patched NonbondedForce
 
 
 def _validate_platform(name: str, props: Dict[str, str]) -> bool:
@@ -303,6 +305,8 @@ class MDSimulator:
         self.ensemble_prod_ps = float(ens.get("production_ps", 200))
         self.ensemble_sample_ps = max(0.001, float(ens.get("sample_interval_ps", 5)))
 
+        self.parallel_workers = max(1, int(md.get("parallel_workers", 1)))
+
         device_str = cfg.get("pipeline", {}).get("device", "auto")
         self.platform, self.platform_props = _select_platform(device_str)
 
@@ -356,17 +360,26 @@ class MDSimulator:
 
         has_pose_col = "docking_pose_file" in df.columns
 
-        for idx in candidates:
+        def _task(idx: int) -> Tuple[int, Optional[float], Optional[float], Optional[float]]:
             smi = df.at[idx, "canonical_smiles"]
             logger.info("Running MM-GBSA for molecule %d: %s", idx, smi[:60])
-
             pose_path: Optional[str] = None
             if has_pose_col:
                 _p = df.at[idx, "docking_pose_file"]
                 if _p and str(_p) != "" and Path(str(_p)).is_file():
                     pose_path = str(_p)
-
             energy, rmsd, estd = self._simulate_one(smi, pdb_path, md_dir, idx, pose_path)
+            return idx, energy, rmsd, estd
+
+        n_workers = min(self.parallel_workers, len(candidates))
+        if n_workers <= 1:
+            results = [_task(idx) for idx in candidates]
+        else:
+            logger.info("Parallel MD: %d workers for %d molecules.", n_workers, len(candidates))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+                results = list(pool.map(_task, candidates))
+
+        for idx, energy, rmsd, estd in results:
             if energy is not None:
                 df.at[idx, "md_binding_energy"] = energy
             if estd is not None and np.isfinite(estd):
@@ -395,12 +408,12 @@ class MDSimulator:
         mol_idx: int,
         docking_pose_path: Optional[str] = None,
     ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-        """Compute MM-GBSA-style binding estimate and ligand RMSD for ranking.
+        """Compute MM-GBSA binding energy via parameter-offset interaction energy.
 
-        ΔG ≈ E(complex) − E(receptor) − E(ligand) with receptor and ligand
-        single-point GB energies taken from the **same** complex geometry
-        (sliced coordinates per frame). Optional **ensemble** mode samples
-        ΔG along short independent MD replicas and reports mean ± std.
+        Uses a single OpenMM system with ``receptor_scale`` / ``ligand_scale``
+        global parameters on the NonbondedForce.  Born radii are always computed
+        with ALL atoms present, avoiding the desolvation artifact that occurs
+        when receptor and ligand are evaluated in separate systems.
 
         Returns (binding_energy_kcal, rmsd_angstrom, binding_std_kcal_or_None).
         """
@@ -414,63 +427,15 @@ class MDSimulator:
             complex_energy, pose_rmsd, md_state = self._gb_energy_complex(
                 receptor_pdb, smiles, off_mol, docking_pose_path,
             )
-            receptor_energy: Optional[float] = None
-            ligand_energy: Optional[float] = None
-            if md_state is not None and md_state.min_positions is not None:
-                pos = md_state.min_positions
-                n_rec = md_state.n_rec_atoms
-                if md_state.rec_simulation is not None:
-                    if hasattr(pos, "value_in_unit"):
-                        rec_slice = pos[:n_rec]
-                    else:
-                        rec_slice = list(pos)[:n_rec]
-                    receptor_energy = self._sim_point_energy(
-                        md_state.rec_simulation, rec_slice,
-                    )
-                if md_state.lig_simulation is not None:
-                    if hasattr(pos, "value_in_unit"):
-                        lig_slice = pos[n_rec:]
-                    else:
-                        lig_slice = list(pos)[n_rec:]
-                    ligand_energy = self._sim_point_energy(
-                        md_state.lig_simulation, lig_slice,
-                    )
-            if receptor_energy is None and md_state is not None and md_state.min_positions is not None:
-                receptor_energy = self._receptor_energy_from_complex_frame(
-                    receptor_pdb, md_state.min_positions, md_state.n_rec_atoms,
-                )
-            if ligand_energy is None:
-                if md_state is not None:
-                    lig_block = self._ligand_pdb_block_from_complex(
-                        md_state.simulation, md_state.n_rec_atoms, md_state.lig_topology,
-                    )
-                    if lig_block:
-                        ligand_energy = self._ligand_energy_from_pdb_block_same_geometry(
-                            lig_block, off_mol,
-                        )
-            if ligand_energy is None:
-                ligand_energy = self._gb_energy_ligand(smiles, off_mol)
-                logger.warning(
-                    "Mol %d: ligand same-frame energy unavailable; "
-                    "falling back to isolated minimised ligand (ΔG may be biased).",
-                    mol_idx,
-                )
-            if receptor_energy is None:
-                receptor_energy = self._gb_energy_receptor(receptor_pdb)
-                logger.warning(
-                    "Mol %d: receptor same-frame energy unavailable; "
-                    "falling back to isolated minimised receptor (ΔG may be biased).",
-                    mol_idx,
-                )
-
-            if not all(e is not None for e in (complex_energy, receptor_energy, ligand_energy)):
-                logger.warning(
-                    "Mol %d: incomplete energies (complex=%s, receptor=%s, ligand=%s)",
-                    mol_idx, complex_energy, receptor_energy, ligand_energy,
-                )
+            if md_state is None or complex_energy is None:
                 return None, None, None
 
-            binding = float(complex_energy - receptor_energy - ligand_energy)
+            binding = self._interaction_energy(md_state)
+            if binding is None:
+                logger.warning("Mol %d: parameter-offset interaction energy failed.", mol_idx)
+                return None, None, None
+            receptor_energy = complex_energy - binding
+            ligand_energy = 0.0
 
             if abs(binding) > 5000:
                 logger.warning(
@@ -491,7 +456,6 @@ class MDSimulator:
 
             if (
                 self.ensemble_enabled
-                and md_state is not None
                 and md_state.min_positions is not None
             ):
                 bind_mean, bind_std, traj_rmsd = self._ensemble_binding_and_rmsd(
@@ -517,12 +481,8 @@ class MDSimulator:
                 logger.info(
                     "Mol %d MM-GBSA: complex=%.1f  receptor=%.1f  ligand=%.1f"
                     "  ΔG=%.2f ± %.2f kcal/mol  pose_RMSD=%s Å  traj_RMSD=%s Å  md_rmsd_mean=%s Å",
-                    mol_idx,
-                    complex_energy,
-                    receptor_energy,
-                    ligand_energy,
-                    binding,
-                    bind_std,
+                    mol_idx, complex_energy, receptor_energy, ligand_energy,
+                    binding, bind_std,
                     f"{pose_rmsd:.2f}" if pose_rmsd is not None else "N/A",
                     f"{traj_rmsd:.2f}" if traj_rmsd is not None else "N/A",
                     f"{final_rmsd:.2f}" if final_rmsd is not None else "N/A",
@@ -531,10 +491,7 @@ class MDSimulator:
                 logger.info(
                     "Mol %d MM-GBSA: complex=%.1f  receptor=%.1f  ligand=%.1f"
                     "  ΔG=%.2f kcal/mol  pose_RMSD=%s Å  traj_RMSD=%s Å  md_rmsd_mean=%s Å",
-                    mol_idx,
-                    complex_energy,
-                    receptor_energy,
-                    ligand_energy,
+                    mol_idx, complex_energy, receptor_energy, ligand_energy,
                     binding,
                     f"{pose_rmsd:.2f}" if pose_rmsd is not None else "N/A",
                     f"{traj_rmsd:.2f}" if traj_rmsd is not None else "N/A",
@@ -545,6 +502,87 @@ class MDSimulator:
         except Exception as exc:
             logger.warning("MD simulation failed for mol %d: %s", mol_idx, exc)
             return None, None, None
+
+    def _interaction_energy(self, md_state: _ComplexState) -> Optional[float]:
+        """Compute ΔG via parameter-offset decomposition on NonbondedForce + CustomGBForce.
+
+        NonbondedForce (Coulomb + LJ): uses ``receptor_scale``/``ligand_scale``
+        global parameter offsets to zero one group's charge/sigma/epsilon.
+
+        CustomGBForce (GB polar solvation): temporarily sets charge to 0 for
+        the zeroed group's particles via ``setParticleParameters`` + ``updateParametersInContext``.
+
+        All atoms remain present in both forces so Born radii are always
+        computed with the full atomic environment.
+        """
+        try:
+            sim = md_state.simulation
+            ctx = sim.context
+            system = sim.system
+            n_rec = md_state.n_rec_atoms
+            nb_grp = md_state.nb_force_group
+
+            gb_force = None
+            gb_group = None
+            for f in system.getForces():
+                if "CustomGBForce" in type(f).__name__ or "GBSAOBCForce" in type(f).__name__:
+                    gb_force = f
+                    gb_group = f.getForceGroup()
+                    break
+
+            nb_mask = 1 << nb_grp
+            gb_mask = (1 << gb_group) if gb_group is not None else 0
+
+            orig_gb_params: Optional[list] = None
+            n_gb_particles = 0
+            if gb_force is not None and hasattr(gb_force, "getParticleParameters"):
+                n_gb_particles = gb_force.getNumParticles()
+                orig_gb_params = [gb_force.getParticleParameters(i) for i in range(n_gb_particles)]
+
+            def _set_gb_charges(zero_rec: bool, zero_lig: bool) -> None:
+                if gb_force is None or orig_gb_params is None:
+                    return
+                for i in range(n_gb_particles):
+                    p = list(orig_gb_params[i])
+                    if (i < n_rec and zero_rec) or (i >= n_rec and zero_lig):
+                        p[0] = 0.0  # zero charge; keep or/sr for Born radii
+                    gb_force.setParticleParameters(i, tuple(p))
+                gb_force.updateParametersInContext(ctx)
+
+            def _restore_gb() -> None:
+                if gb_force is None or orig_gb_params is None:
+                    return
+                for i in range(n_gb_particles):
+                    gb_force.setParticleParameters(i, orig_gb_params[i])
+                gb_force.updateParametersInContext(ctx)
+
+            def _nb_gb_energy(rec_scale: float, lig_scale: float, zero_rec_gb: bool, zero_lig_gb: bool) -> float:
+                ctx.setParameter("receptor_scale", rec_scale)
+                ctx.setParameter("ligand_scale", lig_scale)
+                e_nb = _energy_as_kcal(ctx.getState(getEnergy=True, groups=nb_mask).getPotentialEnergy())
+                e_gb = 0.0
+                if gb_force is not None and gb_mask:
+                    _set_gb_charges(zero_rec_gb, zero_lig_gb)
+                    e_gb = _energy_as_kcal(ctx.getState(getEnergy=True, groups=gb_mask).getPotentialEnergy())
+                    _restore_gb()
+                return e_nb + e_gb
+
+            e_both = _nb_gb_energy(1.0, 1.0, False, False)
+            e_rec = _nb_gb_energy(1.0, 0.0, False, True)
+            e_lig = _nb_gb_energy(0.0, 1.0, True, False)
+
+            ctx.setParameter("receptor_scale", 1.0)
+            ctx.setParameter("ligand_scale", 1.0)
+
+            return float(e_both - e_rec - e_lig)
+        except Exception as exc:
+            logger.warning("Interaction energy failed: %s\n%s", exc, traceback.format_exc())
+            try:
+                ctx.setParameter("receptor_scale", 1.0)
+                ctx.setParameter("ligand_scale", 1.0)
+            except Exception:
+                pass
+            return None
 
     # ------------------------------------------------------------------
     def _gb_energy_complex(
@@ -598,6 +636,7 @@ class MDSimulator:
                 nonbondedMethod=app.NoCutoff,
                 constraints=app.HBonds,
             )
+            nb_force_group = self._patch_nb_force_with_offsets(system, n_rec_atoms)
             n_restrained, restraint_group = self._add_ligand_positional_restraints(
                 system=system,
                 n_rec_atoms=n_rec_atoms,
@@ -635,7 +674,6 @@ class MDSimulator:
                 restraint_force_group=restraint_group,
             )
 
-            # Heavy-atom RMSD between docked and minimised ligand positions
             all_pos = _positions_as_angstrom(state.getPositions())
             lig_final_pos = all_pos[n_rec_atoms:]
             if heavy_mask.any():
@@ -648,13 +686,6 @@ class MDSimulator:
 
             min_positions = state.getPositions()
 
-            rec_sim = self._build_sub_simulation(
-                rec_pdb.topology, app.ForceField("amber14-all.xml", self._implicit_solvent_xml()),
-            )
-            lig_ff = app.ForceField("amber14-all.xml", self._implicit_solvent_xml())
-            lig_ff.registerTemplateGenerator(gaff.generator)
-            lig_sim = self._build_sub_simulation(lig_pdb_obj.topology, lig_ff)
-
             md_state = _ComplexState(
                 simulation=simulation,
                 n_rec_atoms=n_rec_atoms,
@@ -662,9 +693,8 @@ class MDSimulator:
                 heavy_mask=np.asarray(heavy_mask, dtype=bool).copy(),
                 lig_topology=lig_pdb_obj.topology,
                 min_positions=min_positions,
-                rec_simulation=rec_sim,
-                lig_simulation=lig_sim,
                 restraint_force_group=restraint_group,
+                nb_force_group=nb_force_group,
             )
             return energy, pose_rmsd, md_state
 
@@ -772,6 +802,44 @@ class MDSimulator:
         force.setForceGroup(restraint_group)
         system.addForce(force)
         return int(idxs.size), restraint_group
+
+    @staticmethod
+    def _patch_nb_force_with_offsets(system: Any, n_rec_atoms: int) -> int:
+        """Add receptor_scale / ligand_scale parameter offsets to NonbondedForce.
+
+        Zeroing one scale removes that group's charge/LJ contributions from the
+        NonbondedForce energy while keeping its atoms present for the GB Born
+        radius calculation.  Returns the force group index assigned.
+        """
+        NB_GROUP = 1
+        nb = None
+        for f in system.getForces():
+            if isinstance(f, openmm.NonbondedForce):
+                nb = f
+                break
+        if nb is None:
+            raise RuntimeError("No NonbondedForce found in system.")
+
+        NB_GB_GROUP = 2
+        nb.setForceGroup(NB_GROUP)
+        for f in system.getForces():
+            if "CustomGBForce" in type(f).__name__ or "GBSAOBCForce" in type(f).__name__:
+                f.setForceGroup(NB_GB_GROUP)
+
+        nb.addGlobalParameter("receptor_scale", 1.0)
+        nb.addGlobalParameter("ligand_scale", 1.0)
+
+        for i in range(nb.getNumParticles()):
+            charge, sigma, epsilon = nb.getParticleParameters(i)
+            nb.setParticleParameters(i, 0, 0, 0)
+            param = "receptor_scale" if i < n_rec_atoms else "ligand_scale"
+            nb.addParticleParameterOffset(param, i, charge, sigma, epsilon)
+
+        for i in range(nb.getNumExceptions()):
+            p1, p2, chargeProd, sigma, epsilon = nb.getExceptionParameters(i)
+            nb.setExceptionParameters(i, p1, p2, 0, 0, 0)
+
+        return NB_GROUP
 
     def _complex_energy_kcal(
         self,
@@ -953,11 +1021,10 @@ class MDSimulator:
         off_mol: Any,
         mol_idx: int,
     ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-        """Independent short MD replicas; ΔG(t)=E_c(t)-E_r(t)-E_l(t) same-frame, mean ligand RMSD."""
+        """Independent short MD replicas with parameter-offset ΔG decomposition."""
         sim = md_state.simulation
         if md_state.min_positions is None:
             return None, None, None
-        n_rec = md_state.n_rec_atoms
         bindings: List[float] = []
         run_rmsd_avgs: List[float] = []
 
@@ -978,51 +1045,14 @@ class MDSimulator:
             sample_steps = max(1, int(round(self.ensemble_sample_ps * _MD_STEPS_PER_PS)))
             run_rmsds: List[float] = []
 
-            use_cached = (
-                md_state.rec_simulation is not None
-                and md_state.lig_simulation is not None
-            )
-
             done = 0
             while done + sample_steps <= prod_steps:
                 sim.step(sample_steps)
                 done += sample_steps
-                st_full = sim.context.getState(getPositions=True)
-                ec = self._complex_energy_kcal(
-                    simulation=sim,
-                    restraint_force_group=md_state.restraint_force_group,
-                )
-                if ec is None:
+                dg = self._interaction_energy(md_state)
+                if dg is None:
                     continue
-                pos = st_full.getPositions()
-                er: Optional[float] = None
-                el: Optional[float] = None
-                if use_cached:
-                    if hasattr(pos, "value_in_unit"):
-                        rec_slice = pos[:n_rec]
-                        lig_slice = pos[n_rec:]
-                    else:
-                        p = list(pos)
-                        rec_slice = p[:n_rec]
-                        lig_slice = p[n_rec:]
-                    er = self._sim_point_energy(md_state.rec_simulation, rec_slice)
-                    el = self._sim_point_energy(md_state.lig_simulation, lig_slice)
-                if er is None:
-                    er = self._receptor_energy_from_complex_frame(receptor_pdb, pos, n_rec)
-                if el is None:
-                    all_ang = _positions_as_angstrom(pos)
-                    lig_block = self._ligand_pdb_block_from_positions(
-                        all_ang, n_rec, md_state.lig_topology,
-                    )
-                    if lig_block:
-                        el = self._ligand_energy_from_pdb_block_same_geometry(lig_block, off_mol)
-                if er is None or el is None:
-                    logger.debug(
-                        "Mol %d ensemble: skip frame (er=%s el=%s)",
-                        mol_idx, er, el,
-                    )
-                    continue
-                bindings.append(float(ec - er - el))
+                bindings.append(float(dg))
                 r = self._ligand_rmsd_from_simulation(sim, md_state)
                 if r is not None and np.isfinite(r):
                     run_rmsds.append(float(r))

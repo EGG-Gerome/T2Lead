@@ -198,6 +198,7 @@ lead_optimization:
     gb_model: "OBC2"                 # OBC1, OBC2, GBn, GBn2
     ligand_restraint_k_kcal_per_a2: 0.0   # implicit-MD ligand positional restraint; 0 disables
     ligand_restraint_heavy_only: true      # restrain heavy atoms only when enabled
+    parallel_workers: 1                    # >1 runs multiple molecules' MD concurrently (thread pool)
     # Ensemble MM-GBSA: multiple short MD runs; mean/std of approximate ΔG snapshots.
     ensemble:
       enabled: true
