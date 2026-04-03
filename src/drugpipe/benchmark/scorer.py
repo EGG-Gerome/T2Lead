@@ -227,6 +227,7 @@ def score_benchmark_molecules(
 
     optimizer = LeadOptimizer(cfg, out_dir)
     df = optimizer._composite_score(df)
+    df = optimizer._attach_ranking_signals(df)
 
     df["is_approved"] = True
     df["herg_flag"] = df.get("herg_flag", False)
@@ -248,6 +249,9 @@ def score_benchmark_molecules(
         "md_binding_energy",
         "md_binding_energy_std",
         "md_rmsd_mean",
+        "fast_score",
+        "md_reliable",
+        "rank_score",
         "opt_score",
         "is_approved",
         "max_phase",
@@ -258,7 +262,8 @@ def score_benchmark_molecules(
     ]
     keep_cols = [c for c in keep_cols if c in df.columns]
     df_out = df[keep_cols].copy()
-    df_out = df_out.sort_values("opt_score", ascending=False).reset_index(drop=True)
+    sort_col = "rank_score" if "rank_score" in df_out.columns else "opt_score"
+    df_out = df_out.sort_values(sort_col, ascending=False).reset_index(drop=True)
 
     out_csv = out_dir / "benchmark_drugs.csv"
     df_out.to_csv(out_csv, index=False)

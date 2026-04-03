@@ -136,6 +136,7 @@ class _ComplexState:
     min_positions: Any  # OpenMM positions after minimize (full complex)
     rec_simulation: Any = None  # receptor-only Simulation (for per-frame E_receptor)
     lig_simulation: Any = None  # ligand-only Simulation (for per-frame E_ligand)
+    restraint_force_group: Optional[int] = None  # excluded from ΔG if present
 
 
 def _validate_platform(name: str, props: Dict[str, str]) -> bool:
@@ -292,6 +293,8 @@ class MDSimulator:
         self.equilibration_ps = float(md.get("equilibration_ps", 100))
         self.production_ns = float(md.get("production_ns", 1.0))
         self.gb_model = md.get("gb_model", "OBC2")
+        self.ligand_restraint_k = float(md.get("ligand_restraint_k_kcal_per_a2", 0.0))
+        self.ligand_restraint_heavy_only = bool(md.get("ligand_restraint_heavy_only", True))
 
         ens = md.get("ensemble", {})
         self.ensemble_enabled = bool(ens.get("enabled", False))
@@ -580,6 +583,9 @@ class MDSimulator:
 
             n_rec_atoms = modeller.topology.getNumAtoms()
             lig_init_pos = _positions_as_angstrom(lig_pdb_obj.positions)
+            heavy_mask = np.array([
+                _is_heavy_atom(a) for a in lig_pdb_obj.topology.atoms()
+            ])
 
             modeller.add(lig_pdb_obj.topology, lig_pdb_obj.positions)
 
@@ -592,6 +598,18 @@ class MDSimulator:
                 nonbondedMethod=app.NoCutoff,
                 constraints=app.HBonds,
             )
+            n_restrained, restraint_group = self._add_ligand_positional_restraints(
+                system=system,
+                n_rec_atoms=n_rec_atoms,
+                lig_init_pos_ang=lig_init_pos,
+                heavy_mask=heavy_mask,
+            )
+            if n_restrained > 0:
+                logger.debug(
+                    "Applied ligand positional restraint k=%.3f kcal/mol/A^2 on %d atoms.",
+                    self.ligand_restraint_k,
+                    n_restrained,
+                )
             integrator = openmm.LangevinMiddleIntegrator(
                 300 * unit.kelvin, 1.0 / unit.picosecond, 0.002 * unit.picoseconds,
             )
@@ -611,15 +629,15 @@ class MDSimulator:
             simulation.context.setPositions(modeller.positions)
             simulation.minimizeEnergy(maxIterations=1000)
 
-            state = simulation.context.getState(getEnergy=True, getPositions=True)
-            energy = _energy_as_kcal(state.getPotentialEnergy())
+            state = simulation.context.getState(getPositions=True)
+            energy = self._complex_energy_kcal(
+                simulation=simulation,
+                restraint_force_group=restraint_group,
+            )
 
             # Heavy-atom RMSD between docked and minimised ligand positions
             all_pos = _positions_as_angstrom(state.getPositions())
             lig_final_pos = all_pos[n_rec_atoms:]
-            heavy_mask = np.array([
-                _is_heavy_atom(a) for a in lig_pdb_obj.topology.atoms()
-            ])
             if heavy_mask.any():
                 diff = lig_final_pos[heavy_mask] - lig_init_pos[heavy_mask]
                 pose_rmsd: Optional[float] = float(
@@ -646,6 +664,7 @@ class MDSimulator:
                 min_positions=min_positions,
                 rec_simulation=rec_sim,
                 lig_simulation=lig_sim,
+                restraint_force_group=restraint_group,
             )
             return energy, pose_rmsd, md_state
 
@@ -706,6 +725,70 @@ class MDSimulator:
                 mol_idx,
                 exc,
             )
+            return None
+
+    def _add_ligand_positional_restraints(
+        self,
+        system: Any,
+        n_rec_atoms: int,
+        lig_init_pos_ang: np.ndarray,
+        heavy_mask: np.ndarray,
+    ) -> Tuple[int, Optional[int]]:
+        """Add optional harmonic restraints on ligand atoms in implicit MD.
+
+        Returns
+        -------
+        (n_restrained_atoms, restraint_force_group)
+        """
+        if self.ligand_restraint_k <= 1e-9:
+            return 0, None
+
+        if self.ligand_restraint_heavy_only:
+            mask = np.asarray(heavy_mask, dtype=bool)
+        else:
+            mask = np.ones(lig_init_pos_ang.shape[0], dtype=bool)
+
+        idxs = np.flatnonzero(mask)
+        if idxs.size == 0:
+            return 0, None
+
+        # OpenMM uses kJ/mol and nm. 1 kcal/mol/A^2 = 418.4 kJ/mol/nm^2.
+        k_kj_nm2 = float(self.ligand_restraint_k) * 418.4
+        force = openmm.CustomExternalForce(
+            "0.5*k*((x-x0)^2 + (y-y0)^2 + (z-z0)^2)"
+        )
+        force.addGlobalParameter("k", k_kj_nm2)
+        force.addPerParticleParameter("x0")
+        force.addPerParticleParameter("y0")
+        force.addPerParticleParameter("z0")
+
+        for i in idxs:
+            atom_idx = int(n_rec_atoms + int(i))
+            x0, y0, z0 = (np.asarray(lig_init_pos_ang[i], dtype=np.float64) * 0.1).tolist()
+            force.addParticle(atom_idx, [x0, y0, z0])
+
+        # Keep restraints out of MM-GBSA ΔG via force-group exclusion.
+        restraint_group = 31
+        force.setForceGroup(restraint_group)
+        system.addForce(force)
+        return int(idxs.size), restraint_group
+
+    def _complex_energy_kcal(
+        self,
+        simulation: Any,
+        restraint_force_group: Optional[int],
+    ) -> Optional[float]:
+        """Potential energy for complex, excluding restraint bias if configured."""
+        try:
+            if restraint_force_group is None:
+                st = simulation.context.getState(getEnergy=True)
+            else:
+                all_groups_mask = (1 << 32) - 1
+                mask = all_groups_mask ^ (1 << int(restraint_force_group))
+                st = simulation.context.getState(getEnergy=True, groups=mask)
+            return _energy_as_kcal(st.getPotentialEnergy())
+        except Exception as exc:
+            logger.debug("Complex energy evaluation failed: %s", exc)
             return None
 
     def _implicit_solvent_xml(self) -> str:
@@ -904,8 +987,13 @@ class MDSimulator:
             while done + sample_steps <= prod_steps:
                 sim.step(sample_steps)
                 done += sample_steps
-                st_full = sim.context.getState(getEnergy=True, getPositions=True)
-                ec = _energy_as_kcal(st_full.getPotentialEnergy())
+                st_full = sim.context.getState(getPositions=True)
+                ec = self._complex_energy_kcal(
+                    simulation=sim,
+                    restraint_force_group=md_state.restraint_force_group,
+                )
+                if ec is None:
+                    continue
                 pos = st_full.getPositions()
                 er: Optional[float] = None
                 el: Optional[float] = None

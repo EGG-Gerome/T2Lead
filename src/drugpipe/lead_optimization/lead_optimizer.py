@@ -52,6 +52,11 @@ class LeadOptimizer:
         self.w_stability = float(sc.get("w_stability", 0.35))
         self.w_cyp_soft = float(sc.get("w_cyp_soft", 0.08))
 
+        rel = lo.get("md_reliability", {})
+        self.md_reliable_delta_g_max = float(rel.get("delta_g_max_kcal_per_mol", -1.0))
+        self.md_reliable_rmsd_max = float(rel.get("rmsd_max_angstrom", 15.0))
+        self.md_fast_fallback = bool(rel.get("use_fast_score_fallback", True))
+
         self.protein_prep = ProteinPreparator(cfg)
         self.docker = VinaDocking(cfg)
         self.admet = DeepADMET(cfg)
@@ -176,6 +181,76 @@ class LeadOptimizer:
     def _clip01_series(s: pd.Series) -> pd.Series:
         return s.clip(lower=0.0, upper=1.0)
 
+    def _fast_score(self, df: pd.DataFrame) -> pd.Series:
+        """Fast non-MD composite score used as fallback when MD is unreliable."""
+        idx = df.index
+        num_sum = pd.Series(0.0, index=idx, dtype=float)
+        den_sum = pd.Series(0.0, index=idx, dtype=float)
+
+        def num_col(name: str) -> pd.Series:
+            if name in df.columns:
+                return pd.to_numeric(df[name], errors="coerce")
+            return pd.Series(np.nan, index=idx, dtype=float)
+
+        def add_component(weight: float, values: pd.Series) -> None:
+            mask = values.notna()
+            if not mask.any():
+                return
+            num_sum.loc[mask] += float(weight) * values.loc[mask]
+            den_sum.loc[mask] += float(weight)
+
+        pic = num_col("pred_pIC50_ens")
+        add_component(0.30, self._clip01_series((pic - 5.0) / 6.0))
+
+        qed = num_col("QED")
+        add_component(0.10, self._clip01_series(qed))
+
+        mpo = num_col("mpo_score")
+        add_component(0.20, self._clip01_series(mpo))
+
+        dock = num_col("docking_score")
+        add_component(0.20, self._clip01_series(((-dock) - 4.0) / 6.0))
+
+        sa = num_col("sa_score")
+        add_component(0.10, self._clip01_series((6.0 - sa) / 5.0))
+
+        admet = num_col("admet_risk")
+        add_component(0.10, self._clip01_series(1.0 - admet))
+
+        out = num_sum / den_sum.replace(0.0, np.nan)
+        return out
+
+    def _compute_md_reliable(self, df: pd.DataFrame) -> pd.Series:
+        """Flag rows whose MD signal is considered reliable for ranking."""
+        idx = df.index
+        md = (
+            pd.to_numeric(df["md_binding_energy"], errors="coerce")
+            if "md_binding_energy" in df.columns
+            else pd.Series(np.nan, index=idx, dtype=float)
+        )
+        rmsd = (
+            pd.to_numeric(df["md_rmsd_mean"], errors="coerce")
+            if "md_rmsd_mean" in df.columns
+            else pd.Series(np.nan, index=idx, dtype=float)
+        )
+        return (
+            md.notna()
+            & rmsd.notna()
+            & (md <= self.md_reliable_delta_g_max)
+            & (rmsd <= self.md_reliable_rmsd_max)
+        )
+
+    def _attach_ranking_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Attach fast_score / md_reliable / rank_score columns."""
+        out = df.copy()
+        out["fast_score"] = self._fast_score(out)
+        out["md_reliable"] = self._compute_md_reliable(out).astype(bool)
+        out["rank_score"] = out["opt_score"]
+        if self.md_fast_fallback:
+            use_fb = (~out["md_reliable"]) & out["fast_score"].notna()
+            out.loc[use_fb, "rank_score"] = out.loc[use_fb, "fast_score"]
+        return out
+
     @staticmethod
     def _dock_score_abs_norm(s: pd.Series) -> pd.Series:
         """kcal/mol: more negative is better. Maps roughly [-10, -4] → [1, 0]."""
@@ -237,7 +312,17 @@ class LeadOptimizer:
     # ------------------------------------------------------------------
     def _rank_and_output(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sort by composite score, keep top-N, annotate approval status, write CSV."""
-        df = df.sort_values("opt_score", ascending=False)
+        df = self._attach_ranking_signals(df)
+        if "md_reliable" in df.columns:
+            n_rel = int(df["md_reliable"].sum())
+            n_tot = int(len(df))
+            n_fb = int(((~df["md_reliable"]) & df["fast_score"].notna()).sum())
+            logger.info(
+                "MD reliability: %d/%d rows reliable; fallback ranking applied on %d rows.",
+                n_rel, n_tot, n_fb,
+            )
+
+        df = df.sort_values(["rank_score", "opt_score"], ascending=False)
         df = df.head(self.top_n).reset_index(drop=True)
 
         df = self.drug_checker.annotate(df)
@@ -249,6 +334,7 @@ class LeadOptimizer:
             "veber_pass", "admet_risk",
             "md_binding_energy", "md_binding_energy_std", "md_rmsd_mean",
             "explicit_binding_energy", "explicit_rmsd_mean", "explicit_rmsd_drift",
+            "fast_score", "md_reliable", "rank_score",
             "opt_score",
             "is_approved", "max_phase", "pref_name",
             "chembl_id", "chembl_url", "first_approval",

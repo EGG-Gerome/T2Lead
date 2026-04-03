@@ -232,6 +232,13 @@ def build_payload(
     df_bench = pd.read_csv(bench_path) if bench_path.is_file() else pd.DataFrame()
     df_bench = _add_fast_score(df_bench)
 
+    md_unreliable_leads = 0
+    if not df_opt.empty and "md_reliable" in df_opt.columns:
+        md_unreliable_leads = int((~df_opt["md_reliable"].fillna(False).astype(bool)).sum())
+    md_unreliable_bench = 0
+    if not df_bench.empty and "md_reliable" in df_bench.columns:
+        md_unreliable_bench = int((~df_bench["md_reliable"].fillna(False).astype(bool)).sum())
+
     cv_r2 = _parse_cv_r2(log_text)
     dock_ok, dock_tot = _parse_docking_ok(log_text)
     if dock_tot is None:
@@ -276,6 +283,10 @@ def build_payload(
         "leads": _df_records(df_opt),
         "benchmark": _df_records(df_bench),
         "issues": issues_to_json_serializable(issues),
+        "md_reliability": {
+            "unreliable_leads": md_unreliable_leads,
+            "unreliable_benchmark": md_unreliable_bench,
+        },
         "i18n": DASHBOARD_I18N,
     }
 
@@ -473,7 +484,15 @@ function renderAll() {
     .replace(/青色/g,'<b style="color:#00b8d4">■ 青色</b>')
     .replace(/黄色/g,'<b style="color:#fbbf24">■ 黄色</b>')
     .replace(/红色/g,'<b style="color:#ff6b6b">■ 红色</b>') + ' ' + T('axis_zoom_note');
-  document.getElementById('score-note').textContent = T('score_note');
+  const rel = D.md_reliability || {};
+  const nUnrelLead = Number(rel.unreliable_leads || 0);
+  const nUnrelBench = Number(rel.unreliable_benchmark || 0);
+  const relNote = (nUnrelLead + nUnrelBench) > 0
+    ? T('md_reliability_note_tpl', { lead: nUnrelLead, bench: nUnrelBench })
+    : '';
+  document.getElementById('score-note').innerHTML = relNote
+    ? (T('score_note') + '<br>' + relNote)
+    : T('score_note');
 
   const th = `<tr><th>${T('th_rank')}</th><th>${T('th_symbol')}</th><th>ChEMBL</th><th>${T('th_name')}</th><th>${T('th_score')}</th></tr>`;
   document.querySelector('#tbl-targets thead').innerHTML = th;
@@ -544,7 +563,7 @@ function renderLeadsTable() {
     const smLabel = nm ? nm.slice(0,34) : ((r.canonical_smiles||'').slice(0,36) + ((r.canonical_smiles||'').length>36?'…':''));
     tr.innerHTML = `<td><span class="badge b-bench">${T('badge_benchmark')}</span></td><td class="sm" title="${(r.canonical_smiles||'').replace(/"/g,'&quot;')}" style="${nm?'color:var(--a1);font-weight:500':''}">${smLabel}</td>
       <td>${fmt(r.pred_pIC50_ens)}</td><td>${fmt(r.QED)}</td><td>${fmt(r.mpo_score)}</td><td>${fmt(r.docking_score)}</td><td>${fmt(r.sa_score)}</td>
-      <td>${fmt(r.md_binding_energy)}</td><td>${fmt(r.md_rmsd_mean)}</td><td><strong>${fmt(fastScore(r))}</strong></td><td>${fmt(r.opt_score)}</td><td>${chemblCell(r)}</td>`;
+      <td>${fmt(r.md_binding_energy)}</td><td>${fmt(r.md_rmsd_mean)}</td><td><strong>${fmt(fastScore(r))}</strong></td><td>${fmt(num(r.rank_score)===null ? r.opt_score : r.rank_score)}</td><td>${chemblCell(r)}</td>`;
     tb.appendChild(tr);
   });
   if (!bench.length) {
@@ -557,7 +576,7 @@ function renderLeadsTable() {
     const sm = (r.canonical_smiles||'').slice(0,36) + ((r.canonical_smiles||'').length>36?'…':'');
     tr.innerHTML = `<td><span class="badge b-lead">${T('badge_lead')}</span></td><td class="sm" title="${(r.canonical_smiles||'').replace(/"/g,'&quot;')}">${sm}</td>
       <td>${fmt(r.pred_pIC50_ens)}</td><td>${fmt(r.QED)}</td><td>${fmt(r.mpo_score)}</td><td>${fmt(r.docking_score)}</td><td>${fmt(r.sa_score)}</td>
-      <td>${fmt(r.md_binding_energy)}</td><td>${fmt(r.md_rmsd_mean)}</td><td><strong>${fmt(fastScore(r))}</strong></td><td>${fmt(r.opt_score)}</td><td>${chemblCell(r)}</td>`;
+      <td>${fmt(r.md_binding_energy)}</td><td>${fmt(r.md_rmsd_mean)}</td><td><strong>${fmt(fastScore(r))}</strong></td><td>${fmt(num(r.rank_score)===null ? r.opt_score : r.rank_score)}</td><td>${chemblCell(r)}</td>`;
     tb.appendChild(tr);
   });
 }
@@ -609,6 +628,7 @@ function renderCharts() {
   const mpoVals = rows.map(r => num(r.mpo_score));
   const fastVals = rows.map(r => num(fastScore(r)));
   const optVals = rows.map(r => num(r.opt_score));
+  const rankVals = rows.map(r => (num(r.rank_score) === null ? num(r.opt_score) : num(r.rank_score)));
   const picVals = rows.map(r => num(r.pred_pIC50_ens));
   const rmsdVals = rows.map(r => num(r.md_rmsd_mean));
   const saVals = rows.map(r => num(r.sa_score));
@@ -669,7 +689,7 @@ function renderCharts() {
           callbacks: {
             label: function(ctx) {
               const i = ctx.dataIndex;
-              return 'Fast=' + fmt(ctx.raw, 4) + '  |  Opt(struct)=' + fmt(optVals[i], 4);
+              return 'Fast=' + fmt(ctx.raw, 4) + '  |  Rank=' + fmt(rankVals[i], 4) + '  |  Opt(struct)=' + fmt(optVals[i], 4);
             }
           }
         }
@@ -802,6 +822,8 @@ def _write_score_cache(
                 "md_binding_energy": rec.get("md_binding_energy"),
                 "md_rmsd_mean": rec.get("md_rmsd_mean"),
                 "fast_score": rec.get("fast_score"),
+                "md_reliable": rec.get("md_reliable"),
+                "rank_score": rec.get("rank_score"),
                 "opt_score": rec.get("opt_score"),
             }
         )
