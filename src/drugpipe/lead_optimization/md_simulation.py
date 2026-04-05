@@ -838,6 +838,13 @@ class MDSimulator:
         for i in range(nb.getNumExceptions()):
             p1, p2, chargeProd, sigma, epsilon = nb.getExceptionParameters(i)
             nb.setExceptionParameters(i, p1, p2, 0, 0, 0)
+            both_rec = p1 < n_rec_atoms and p2 < n_rec_atoms
+            both_lig = p1 >= n_rec_atoms and p2 >= n_rec_atoms
+            if both_rec:
+                nb.addExceptionParameterOffset("receptor_scale", i, chargeProd, sigma, epsilon)
+            elif both_lig:
+                nb.addExceptionParameterOffset("ligand_scale", i, chargeProd, sigma, epsilon)
+            # Cross rec-lig exceptions (rare in single-topology): left at zero.
 
         return NB_GROUP
 
