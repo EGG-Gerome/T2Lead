@@ -56,6 +56,9 @@ class LeadOptimizer:
         self.md_reliable_delta_g_max = float(rel.get("delta_g_max_kcal_per_mol", -1.0))
         self.md_reliable_rmsd_max = float(rel.get("rmsd_max_angstrom", 15.0))
         self.md_fast_fallback = bool(rel.get("use_fast_score_fallback", True))
+        self.strict_top_n_md_reliable_only = bool(
+            rel.get("strict_top_n_md_reliable_only", False)
+        )
 
         self.protein_prep = ProteinPreparator(cfg)
         self.docker = VinaDocking(cfg)
@@ -317,10 +320,30 @@ class LeadOptimizer:
             n_rel = int(df["md_reliable"].sum())
             n_tot = int(len(df))
             n_fb = int(((~df["md_reliable"]) & df["fast_score"].notna()).sum())
-            logger.info(
-                "MD reliability: %d/%d rows reliable; fallback ranking applied on %d rows.",
-                n_rel, n_tot, n_fb,
-            )
+            if self.strict_top_n_md_reliable_only:
+                logger.info(
+                    "MD reliability: %d/%d rows reliable; strict mode keeps only reliable rows.",
+                    n_rel, n_tot,
+                )
+            else:
+                logger.info(
+                    "MD reliability: %d/%d rows reliable; fallback ranking applied on %d rows.",
+                    n_rel, n_tot, n_fb,
+                )
+
+        if self.strict_top_n_md_reliable_only:
+            if "md_reliable" not in df.columns:
+                logger.warning(
+                    "Strict MD mode enabled but md_reliable column missing; output will be empty."
+                )
+                df = df.iloc[0:0].copy()
+            else:
+                df = df[df["md_reliable"]].copy()
+                if len(df) < self.top_n:
+                    logger.warning(
+                        "Only %d MD-reliable leads available (< requested top %d).",
+                        len(df), self.top_n,
+                    )
 
         df = df.sort_values(["rank_score", "opt_score"], ascending=False)
         df = df.head(self.top_n).reset_index(drop=True)
