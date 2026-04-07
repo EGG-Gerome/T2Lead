@@ -31,6 +31,14 @@ python scripts/run_pipeline.py -c my_variant_config.yaml -v
 
 详细安装：[docs/guide/quickstart_zh.md](docs/guide/quickstart_zh.md)。
 
+## CI / PR 工作流
+
+- GitHub Actions 会在每次 pull request 和每个分支 push 时运行 `CI` workflow。
+- 本地等价检查是 `make test` 或 `python -m pytest tests/ -v`。
+- 推荐使用短期分支，例如 `feat/*`、`fix/*`、`docs/*`、`chore/*`。
+- 请向 `main` 发起 pull request，并等待必需的 `CI` 检查通过后再合并。
+- 协作约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## 输出（按疾病 / 运行）
 
 默认 `pipeline.output_layout.use_stage_subdirs` 下，产物位于 `<pipeline.out_dir>/<disease_slug>/`：
