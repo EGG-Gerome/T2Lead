@@ -47,7 +47,7 @@ install-conda-stack:  ## Create conda env (if missing) and conda-forge scientifi
 		echo "Conda env $(CONDA_ENV) already exists; skipping create."; \
 	fi
 	conda install -n $(CONDA_ENV) -c conda-forge \
-		rdkit openmm pdbfixer mdtraj openmmforcefields openff-toolkit -y
+		rdkit openmm pdbfixer mdtraj openmmforcefields openff-toolkit ambertools -y
 
 install-pip-stack:  ## Editable install + docking + CReM (crem, vina, meeko, gemmi)
 	$(PYTHON) -m pip install -U pip

@@ -192,13 +192,14 @@ lead_optimization:
 
   md_simulation:
     enabled: true
-    top_n_for_md: 10                 # only run MD on top-N by docking score
+    top_n_for_md: 15                 # run MD on top-15 molecules ranked by docking_score
     equilibration_ps: 100
     production_ns: 1.0
     gb_model: "OBC2"                 # OBC1, OBC2, GBn, GBn2
     ligand_restraint_k_kcal_per_a2: 0.0   # implicit-MD ligand positional restraint; 0 disables
     ligand_restraint_heavy_only: true      # restrain heavy atoms only when enabled
-    parallel_workers: 1                    # >1 runs multiple molecules' MD concurrently (thread pool)
+    parallel_workers: 1                    # single GPU worker; avoids multi-context contention
+    resume_from_checkpoint: true           # resume from md_trajectories/md_progress.csv when present
     # Ensemble MM-GBSA: multiple short MD runs; mean/std of approximate ΔG snapshots.
     ensemble:
       enabled: true
@@ -226,10 +227,12 @@ lead_optimization:
     w_cyp_soft: 0.08                 # soft penalty for CYP pharmacophore risk (0 = disable)
 
   md_reliability:
-    # If MD is unreliable, keep opt_score visible but rank by fast_score fallback.
+    # Strict mode: final output keeps only md_reliable rows (can be < top_n_optimized).
     delta_g_max_kcal_per_mol: -1.0   # require MD ΔG <= this threshold
     rmsd_max_angstrom: 15.0          # require md_rmsd_mean <= this threshold
-    use_fast_score_fallback: true
+    use_fast_score_fallback: false
+    strict_top_n_md_reliable_only: true
+    strict_zero_fallback: true       # if strict yields 0 rows, fallback to fast-score top-N
 
   approved_drug_check:
     enabled: true                      # query ChEMBL to flag known approved / clinical-stage drugs

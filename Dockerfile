@@ -14,7 +14,7 @@ COPY . /app
 
 RUN conda create -n t2lead python=3.11 -y \
     && conda install -n t2lead -c conda-forge \
-        rdkit openmm pdbfixer mdtraj openmmforcefields openff-toolkit -y \
+        rdkit openmm pdbfixer mdtraj openmmforcefields openff-toolkit ambertools -y \
     && conda run -n t2lead pip install --no-cache-dir -U pip \
     && conda run -n t2lead pip install --no-cache-dir -e ".[docking,h2l]" \
     && conda run -n t2lead pip install --no-cache-dir \

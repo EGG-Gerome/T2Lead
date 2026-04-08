@@ -56,6 +56,12 @@ class LeadOptimizer:
         self.md_reliable_delta_g_max = float(rel.get("delta_g_max_kcal_per_mol", -1.0))
         self.md_reliable_rmsd_max = float(rel.get("rmsd_max_angstrom", 15.0))
         self.md_fast_fallback = bool(rel.get("use_fast_score_fallback", True))
+        self.strict_top_n_md_reliable_only = bool(
+            rel.get("strict_top_n_md_reliable_only", False)
+        )
+        self.strict_zero_fallback = bool(
+            rel.get("strict_zero_fallback", True)
+        )
 
         self.protein_prep = ProteinPreparator(cfg)
         self.docker = VinaDocking(cfg)
@@ -313,17 +319,74 @@ class LeadOptimizer:
     def _rank_and_output(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sort by composite score, keep top-N, annotate approval status, write CSV."""
         df = self._attach_ranking_signals(df)
+        selection_mode = "default_ranking"
+        selection_basis = "rank_score"
+        strict_reliable_count: Optional[int] = None
+        strict_total_count: Optional[int] = None
         if "md_reliable" in df.columns:
             n_rel = int(df["md_reliable"].sum())
             n_tot = int(len(df))
             n_fb = int(((~df["md_reliable"]) & df["fast_score"].notna()).sum())
-            logger.info(
-                "MD reliability: %d/%d rows reliable; fallback ranking applied on %d rows.",
-                n_rel, n_tot, n_fb,
-            )
+            strict_reliable_count = n_rel
+            strict_total_count = n_tot
+            if self.strict_top_n_md_reliable_only:
+                logger.info(
+                    "MD reliability: %d/%d rows reliable; strict mode keeps only reliable rows.",
+                    n_rel, n_tot,
+                )
+            else:
+                logger.info(
+                    "MD reliability: %d/%d rows reliable; fallback ranking applied on %d rows.",
+                    n_rel, n_tot, n_fb,
+                )
+
+        if self.strict_top_n_md_reliable_only:
+            if "md_reliable" not in df.columns:
+                logger.warning(
+                    "Strict MD mode enabled but md_reliable column missing; output will be empty."
+                )
+                df = df.iloc[0:0].copy()
+                selection_mode = "strict_md_missing_column"
+            else:
+                strict_df = df[df["md_reliable"]].copy()
+                if strict_df.empty and self.strict_zero_fallback:
+                    selection_mode = "fallback_no_reliable_md"
+                    if "fast_score" in df.columns and df["fast_score"].notna().any():
+                        selection_basis = "fast_score"
+                        logger.warning(
+                            "No MD-reliable leads found; negotiated fallback activated "
+                            "(top %d by fast_score).",
+                            self.top_n,
+                        )
+                        df = df.copy()
+                        df["rank_score"] = df["fast_score"].where(
+                            df["fast_score"].notna(), df["opt_score"]
+                        )
+                    else:
+                        selection_basis = "opt_score"
+                        logger.warning(
+                            "No MD-reliable leads and no fast_score available; fallback "
+                            "to opt_score ranking for top %d.",
+                            self.top_n,
+                        )
+                else:
+                    selection_mode = "strict_md_reliable_only"
+                    df = strict_df
+                    selection_basis = "rank_score"
+                if selection_mode == "strict_md_reliable_only" and len(df) < self.top_n:
+                    logger.warning(
+                        "Only %d MD-reliable leads available (< requested top %d).",
+                        len(df), self.top_n,
+                    )
 
         df = df.sort_values(["rank_score", "opt_score"], ascending=False)
         df = df.head(self.top_n).reset_index(drop=True)
+        df["selection_mode"] = selection_mode
+        df["selection_basis"] = selection_basis
+        if strict_reliable_count is not None:
+            df["strict_reliable_count"] = strict_reliable_count
+        if strict_total_count is not None:
+            df["strict_total_count"] = strict_total_count
 
         df = self.drug_checker.annotate(df)
 
@@ -335,6 +398,7 @@ class LeadOptimizer:
             "md_binding_energy", "md_binding_energy_std", "md_rmsd_mean",
             "explicit_binding_energy", "explicit_rmsd_mean", "explicit_rmsd_drift",
             "fast_score", "md_reliable", "rank_score",
+            "selection_mode", "selection_basis", "strict_reliable_count", "strict_total_count",
             "opt_score",
             "is_approved", "max_phase", "pref_name",
             "chembl_id", "chembl_url", "first_approval",

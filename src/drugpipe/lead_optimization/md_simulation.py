@@ -13,6 +13,7 @@ Required dependencies:
   - openmm              (conda install -c conda-forge openmm)
   - openmmforcefields   (conda install -c conda-forge openmmforcefields)
   - openff-toolkit      (conda install -c conda-forge openff-toolkit)
+  - ambertools          (conda install -c conda-forge ambertools)
 Optional:
   - mdtraj              (conda install -c conda-forge mdtraj)
 """
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import shutil
 import tempfile
 import traceback
 from dataclasses import dataclass
@@ -81,6 +83,7 @@ _MD_STEPS_PER_PS = int(round(1.0 / _MD_TIMESTEP_PS))
 
 # kJ/mol → kcal/mol conversion factor
 _KJ_TO_KCAL = 1.0 / 4.184
+_AM1BCC_PREFLIGHT: Optional[Tuple[bool, str]] = None
 
 
 def _energy_as_kcal(val) -> float:
@@ -205,6 +208,74 @@ def _select_platform(device: str) -> Tuple[Optional[str], Dict[str, str]]:
     return "CPU", {}
 
 
+def _probe_am1bcc_backend() -> Tuple[bool, str]:
+    """Return whether the runtime can assign AM1-BCC charges via OpenFF."""
+    if not _GAFF_OK:
+        return (
+            False,
+            "AM1-BCC preflight skipped because openmmforcefields / openff-toolkit "
+            "are not installed.",
+        )
+
+    diagnostics: List[str] = []
+    ambertools_available = False
+
+    try:
+        from openff.toolkit.utils import AmberToolsToolkitWrapper
+    except Exception as exc:
+        diagnostics.append(f"AmberToolsToolkitWrapper import failed: {exc}")
+    else:
+        try:
+            ambertools_available = bool(AmberToolsToolkitWrapper.is_available())
+        except Exception as exc:
+            diagnostics.append(f"AmberToolsToolkitWrapper.is_available() failed: {exc}")
+
+    diagnostics.append(
+        f"AmberToolsToolkitWrapper.is_available={ambertools_available}"
+    )
+    diagnostics.append(f"antechamber={shutil.which('antechamber') or 'missing'}")
+    diagnostics.append(f"sqm={shutil.which('sqm') or 'missing'}")
+
+    try:
+        probe = OFFMolecule.from_smiles("CCO", allow_undefined_stereo=True)
+        probe.assign_partial_charges(
+            partial_charge_method="am1bcc",
+            normalize_partial_charges=True,
+        )
+    except Exception as exc:
+        return (
+            False,
+            "AM1-BCC charge backend is unavailable. "
+            "GAFFTemplateGenerator needs OpenFF partial charges, but an AM1-BCC "
+            "probe molecule could not be charged. "
+            f"Diagnostics: {'; '.join(diagnostics)}. "
+            "Install conda-forge ambertools in the same environment so "
+            "`antechamber` and `sqm` are available before rerunning Stage 4. "
+            f"Underlying error: {exc}",
+        )
+
+    return (
+        True,
+        "AM1-BCC preflight OK. "
+        f"Diagnostics: {'; '.join(diagnostics)}.",
+    )
+
+
+def _require_am1bcc_backend() -> None:
+    """Fail loudly when the AM1-BCC runtime chain is broken."""
+    global _AM1BCC_PREFLIGHT
+
+    if _AM1BCC_PREFLIGHT is None:
+        _AM1BCC_PREFLIGHT = _probe_am1bcc_backend()
+        ok, msg = _AM1BCC_PREFLIGHT
+        if ok:
+            logger.info("%s", msg)
+
+    ok, msg = _AM1BCC_PREFLIGHT
+    if not ok:
+        raise RuntimeError(msg)
+
+
 def _smiles_to_3d_pdb(smiles: str) -> Optional[str]:
     """Generate a 3D PDB block from a SMILES string."""
     if not _RDKIT_OK:
@@ -306,6 +377,7 @@ class MDSimulator:
         self.ensemble_sample_ps = max(0.001, float(ens.get("sample_interval_ps", 5)))
 
         self.parallel_workers = max(1, int(md.get("parallel_workers", 1)))
+        self.resume_from_checkpoint = bool(md.get("resume_from_checkpoint", True))
 
         device_str = cfg.get("pipeline", {}).get("device", "auto")
         self.platform, self.platform_props = _select_platform(device_str)
@@ -345,6 +417,8 @@ class MDSimulator:
             )
             return df
 
+        _require_am1bcc_backend()
+
         pdb_path = protein_info.get("pdb_path")
         if not pdb_path or not Path(pdb_path).exists():
             logger.error("No prepared PDB for MD simulation.")
@@ -357,6 +431,39 @@ class MDSimulator:
 
         md_dir = out_dir / "md_trajectories"
         md_dir.mkdir(parents=True, exist_ok=True)
+        progress_csv = md_dir / "md_progress.csv"
+
+        progress_records: Dict[int, Dict[str, Any]] = {}
+        processed_idx: set[int] = set()
+        if self.resume_from_checkpoint:
+            progress_records = self._load_md_progress(progress_csv, df.index)
+            for idx, rec in progress_records.items():
+                processed_idx.add(idx)
+                if str(rec.get("status", "")).lower() == "ok":
+                    e = rec.get("md_binding_energy", np.nan)
+                    s = rec.get("md_binding_energy_std", np.nan)
+                    r = rec.get("md_rmsd_mean", np.nan)
+                    if np.isfinite(e):
+                        df.at[idx, "md_binding_energy"] = float(e)
+                    if np.isfinite(s):
+                        df.at[idx, "md_binding_energy_std"] = float(s)
+                    if np.isfinite(r):
+                        df.at[idx, "md_rmsd_mean"] = float(r)
+            if processed_idx:
+                logger.info(
+                    "MD resume: loaded %d processed molecules from %s.",
+                    len(processed_idx), progress_csv,
+                )
+
+        pending = [idx for idx in candidates if int(idx) not in processed_idx]
+        if not pending:
+            n_done = df["md_binding_energy"].notna().sum()
+            logger.info(
+                "MD resume: all %d candidates already processed, skipping simulation.",
+                len(candidates),
+            )
+            logger.info("MD simulation complete: %d / %d candidates processed.", n_done, len(candidates))
+            return df
 
         has_pose_col = "docking_pose_file" in df.columns
 
@@ -371,15 +478,12 @@ class MDSimulator:
             energy, rmsd, estd = self._simulate_one(smi, pdb_path, md_dir, idx, pose_path)
             return idx, energy, rmsd, estd
 
-        n_workers = min(self.parallel_workers, len(candidates))
-        if n_workers <= 1:
-            results = [_task(idx) for idx in candidates]
-        else:
-            logger.info("Parallel MD: %d workers for %d molecules.", n_workers, len(candidates))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
-                results = list(pool.map(_task, candidates))
-
-        for idx, energy, rmsd, estd in results:
+        def _update_result(
+            idx: int,
+            energy: Optional[float],
+            rmsd: Optional[float],
+            estd: Optional[float],
+        ) -> None:
             if energy is not None:
                 df.at[idx, "md_binding_energy"] = energy
             if estd is not None and np.isfinite(estd):
@@ -387,9 +491,84 @@ class MDSimulator:
             if rmsd is not None:
                 df.at[idx, "md_rmsd_mean"] = rmsd
 
+            if self.resume_from_checkpoint:
+                progress_records[int(idx)] = {
+                    "idx": int(idx),
+                    "status": "ok" if energy is not None else "failed",
+                    "md_binding_energy": float(energy) if energy is not None else np.nan,
+                    "md_binding_energy_std": (
+                        float(estd) if estd is not None and np.isfinite(estd) else np.nan
+                    ),
+                    "md_rmsd_mean": float(rmsd) if rmsd is not None else np.nan,
+                }
+                self._save_md_progress(progress_csv, progress_records)
+
+        n_workers = min(self.parallel_workers, len(pending))
+        if n_workers <= 1:
+            for idx in pending:
+                _idx, energy, rmsd, estd = _task(idx)
+                _update_result(_idx, energy, rmsd, estd)
+        else:
+            logger.info("Parallel MD: %d workers for %d molecules.", n_workers, len(pending))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futures = [pool.submit(_task, idx) for idx in pending]
+                for fut in concurrent.futures.as_completed(futures):
+                    idx, energy, rmsd, estd = fut.result()
+                    _update_result(idx, energy, rmsd, estd)
+
         n_done = df["md_binding_energy"].notna().sum()
         logger.info("MD simulation complete: %d / %d candidates processed.", n_done, len(candidates))
         return df
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _load_md_progress(path: Path, valid_index: pd.Index) -> Dict[int, Dict[str, Any]]:
+        """Load checkpoint rows for previously processed MD molecules."""
+        if not path.is_file():
+            return {}
+        try:
+            hist = pd.read_csv(path)
+        except Exception as exc:
+            logger.warning("MD resume: failed to read checkpoint %s (%s).", path, exc)
+            return {}
+
+        valid = {int(i) for i in valid_index.tolist()}
+        out: Dict[int, Dict[str, Any]] = {}
+        for _, row in hist.iterrows():
+            try:
+                idx = int(row.get("idx"))
+            except Exception:
+                continue
+            if idx not in valid:
+                continue
+            status = str(row.get("status", "")).strip().lower()
+            if not status:
+                e = pd.to_numeric(row.get("md_binding_energy"), errors="coerce")
+                status = "ok" if pd.notna(e) else "failed"
+            out[idx] = {
+                "status": status,
+                "md_binding_energy": pd.to_numeric(row.get("md_binding_energy"), errors="coerce"),
+                "md_binding_energy_std": pd.to_numeric(row.get("md_binding_energy_std"), errors="coerce"),
+                "md_rmsd_mean": pd.to_numeric(row.get("md_rmsd_mean"), errors="coerce"),
+            }
+        return out
+
+    @staticmethod
+    def _save_md_progress(path: Path, records: Dict[int, Dict[str, Any]]) -> None:
+        """Persist checkpoint rows so interrupted runs can resume."""
+        rows: List[Dict[str, Any]] = []
+        for idx in sorted(records):
+            rec = records[idx]
+            rows.append(
+                {
+                    "idx": int(idx),
+                    "status": rec.get("status", ""),
+                    "md_binding_energy": rec.get("md_binding_energy", np.nan),
+                    "md_binding_energy_std": rec.get("md_binding_energy_std", np.nan),
+                    "md_rmsd_mean": rec.get("md_rmsd_mean", np.nan),
+                }
+            )
+        pd.DataFrame(rows).to_csv(path, index=False)
 
     # ------------------------------------------------------------------
     def _select_candidates(self, df: pd.DataFrame) -> List[int]:
@@ -838,6 +1017,13 @@ class MDSimulator:
         for i in range(nb.getNumExceptions()):
             p1, p2, chargeProd, sigma, epsilon = nb.getExceptionParameters(i)
             nb.setExceptionParameters(i, p1, p2, 0, 0, 0)
+            both_rec = p1 < n_rec_atoms and p2 < n_rec_atoms
+            both_lig = p1 >= n_rec_atoms and p2 >= n_rec_atoms
+            if both_rec:
+                nb.addExceptionParameterOffset("receptor_scale", i, chargeProd, sigma, epsilon)
+            elif both_lig:
+                nb.addExceptionParameterOffset("ligand_scale", i, chargeProd, sigma, epsilon)
+            # Cross rec-lig exceptions (rare in single-topology): left at zero.
 
         return NB_GROUP
 
@@ -1290,6 +1476,8 @@ class ExplicitSolventRefiner:
         if not _OPENMM_OK or not _GAFF_OK:
             logger.warning("OpenMM/GAFF not available; skipping explicit solvent MD.")
             return df
+
+        _require_am1bcc_backend()
 
         pdb_path = protein_info.get("pdb_path")
         if not pdb_path or not Path(pdb_path).exists():

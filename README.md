@@ -31,6 +31,14 @@ python scripts/run_pipeline.py -c my_variant_config.yaml -v
 
 Detailed setup: [docs/guide/quickstart.md](docs/guide/quickstart.md).
 
+## CI and PR workflow
+
+- GitHub Actions runs the `CI` workflow on every pull request and every branch push.
+- The local equivalent is `make test` or `python -m pytest tests/ -v`.
+- Prefer short-lived branches such as `feat/*`, `fix/*`, `docs/*`, and `chore/*`.
+- Open pull requests into `main` and wait for required `CI` checks to pass before merge.
+- Contributor conventions live in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Outputs (per disease / run)
 
 With default `pipeline.output_layout.use_stage_subdirs`, artifacts live under `<pipeline.out_dir>/<disease_slug>/`:
