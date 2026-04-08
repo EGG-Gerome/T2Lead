@@ -307,17 +307,33 @@ def _resolve_target_chembl_id(
     if current and str(current).strip():
         return str(current).strip()
 
-    # Prefer the actual Stage-2 selected target from the latest complete log.
-    try:
-        from drugpipe.report.log_parser import find_latest_full_log
-
-        logs_dir = layout.get("logs")
-        log_path = find_latest_full_log(logs_dir) if isinstance(logs_dir, Path) else None
-        if log_path and log_path.is_file():
-            text = log_path.read_text(encoding="utf-8", errors="replace")
-            m = re.search(r"Selected target\s+(CHEMBL\d+)\s+\(([^)]+)\)", text)
+    def _parse_target_from_log_text(text: str) -> Optional[str]:
+        patterns = (
+            r"Selected target\s+(CHEMBL\d+)\s+\(([^)]+)\)",
+            r"Target context for Stage 4:\s*(CHEMBL\d+)\s+\(([^)]+)\)",
+        )
+        for pat in patterns:
+            m = re.search(pat, text)
             if m:
                 return str(m.group(1))
+        return None
+
+    # Prefer the actual Stage-2/Stage-4 resolved target from the newest logs.
+    try:
+        logs_dir = layout.get("logs")
+        if isinstance(logs_dir, Path) and logs_dir.is_dir():
+            log_paths = sorted(
+                logs_dir.glob("*_full.log"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for log_path in log_paths:
+                if not log_path.is_file():
+                    continue
+                text = log_path.read_text(encoding="utf-8", errors="replace")
+                tid = _parse_target_from_log_text(text)
+                if tid:
+                    return tid
     except Exception:
         pass
 

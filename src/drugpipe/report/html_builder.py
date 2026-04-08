@@ -106,10 +106,51 @@ def _parse_reinvent(text: str) -> Optional[int]:
 
 
 def _parse_selected_target(text: str) -> Tuple[Optional[str], Optional[str]]:
-    m = re.search(r"Selected target\s+(CHEMBL\d+)\s+\(([^)]+)\)", text)
-    if not m:
+    patterns = (
+        r"Selected target\s+(CHEMBL\d+)\s+\(([^)]+)\)",
+        r"Target context for Stage 4:\s*(CHEMBL\d+)\s+\(([^)]+)\)",
+    )
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            return m.group(1), m.group(2)
+    return None, None
+
+
+def _find_target_from_logs(logs_dir: Path) -> Tuple[Optional[str], Optional[str]]:
+    if not isinstance(logs_dir, Path) or not logs_dir.is_dir():
         return None, None
-    return m.group(1), m.group(2)
+    try:
+        log_paths = sorted(
+            logs_dir.glob("*_full.log"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return None, None
+
+    for log_path in log_paths:
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        tid, sym = _parse_selected_target(text)
+        if tid:
+            return tid, sym
+    return None, None
+
+
+def _parse_benchmark_target(text: str) -> Optional[str]:
+    patterns = (
+        r"Benchmark: selected \d+ reference drug\(s\) for target\s+(CHEMBL\d+)",
+        r"Benchmark: found \d+ ChEMBL molecule id\(s\) for\s+(CHEMBL\d+)",
+        r"Benchmark: no mechanism records for\s+(CHEMBL\d+)",
+    )
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            return m.group(1)
+    return None
 
 
 def _safe_num(v: Any) -> Optional[float]:
@@ -203,6 +244,8 @@ def build_payload(
     target_tid = ""
     target_sym = "—"
     log_tid, log_sym = _parse_selected_target(log_text)
+    if not log_tid:
+        log_tid, log_sym = _find_target_from_logs(logs_dir)
     if log_tid:
         target_tid = log_tid
     if log_sym:
@@ -228,8 +271,38 @@ def build_payload(
     df_opt = pd.read_csv(opt_path) if opt_path.is_file() else pd.DataFrame()
     df_opt = _add_fast_score(df_opt)
 
+    selection_mode = "default_ranking"
+    selection_basis = "rank_score"
+    strict_reliable_count: Optional[int] = None
+    strict_total_count: Optional[int] = None
+    if not df_opt.empty:
+        if "selection_mode" in df_opt.columns:
+            vals = df_opt["selection_mode"].dropna().astype(str)
+            if not vals.empty:
+                selection_mode = vals.iloc[0]
+        if "selection_basis" in df_opt.columns:
+            vals = df_opt["selection_basis"].dropna().astype(str)
+            if not vals.empty:
+                selection_basis = vals.iloc[0]
+        if "strict_reliable_count" in df_opt.columns:
+            vals = pd.to_numeric(df_opt["strict_reliable_count"], errors="coerce").dropna()
+            if not vals.empty:
+                strict_reliable_count = int(vals.iloc[0])
+        if "strict_total_count" in df_opt.columns:
+            vals = pd.to_numeric(df_opt["strict_total_count"], errors="coerce").dropna()
+            if not vals.empty:
+                strict_total_count = int(vals.iloc[0])
+
     bench_path = s4 / "benchmark_drugs.csv"
     df_bench = pd.read_csv(bench_path) if bench_path.is_file() else pd.DataFrame()
+    bench_target_tid = _parse_benchmark_target(log_text)
+    if (
+        not df_bench.empty
+        and bench_target_tid
+        and target_tid
+        and str(bench_target_tid).strip() != str(target_tid).strip()
+    ):
+        df_bench = pd.DataFrame()
     df_bench = _add_fast_score(df_bench)
 
     md_unreliable_leads = 0
@@ -286,6 +359,12 @@ def build_payload(
         "md_reliability": {
             "unreliable_leads": md_unreliable_leads,
             "unreliable_benchmark": md_unreliable_bench,
+        },
+        "selection_policy": {
+            "mode": selection_mode,
+            "basis": selection_basis,
+            "strict_reliable_count": strict_reliable_count,
+            "strict_total_count": strict_total_count,
         },
         "i18n": DASHBOARD_I18N,
     }
@@ -490,9 +569,18 @@ function renderAll() {
   const relNote = (nUnrelLead + nUnrelBench) > 0
     ? T('md_reliability_note_tpl', { lead: nUnrelLead, bench: nUnrelBench })
     : '';
-  document.getElementById('score-note').innerHTML = relNote
-    ? (T('score_note') + '<br>' + relNote)
-    : T('score_note');
+  const pol = D.selection_policy || {};
+  const polMode = pol.mode || '';
+  const polRel = Number(pol.strict_reliable_count ?? 0);
+  const polTot = Number(pol.strict_total_count ?? 0);
+  const basisLabel = (pol.basis === 'fast_score') ? T('basis_fast_score') : T('basis_opt_score');
+  const policyNote = (polMode === 'fallback_no_reliable_md')
+    ? T('strict_zero_fallback_note_tpl', { rel: polRel, tot: polTot, top: D.n_optimized || 0, basis: basisLabel })
+    : '';
+  const allNotes = [T('score_note')];
+  if (policyNote) allNotes.push(policyNote);
+  if (relNote) allNotes.push(relNote);
+  document.getElementById('score-note').innerHTML = allNotes.join('<br>');
 
   const th = `<tr><th>${T('th_rank')}</th><th>${T('th_symbol')}</th><th>ChEMBL</th><th>${T('th_name')}</th><th>${T('th_score')}</th></tr>`;
   document.querySelector('#tbl-targets thead').innerHTML = th;

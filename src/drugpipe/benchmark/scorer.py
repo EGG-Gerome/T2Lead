@@ -85,6 +85,9 @@ def _maybe_run_md_for_benchmark(
     )
     md_cfg["enabled"] = True
     md_cfg["top_n_for_md"] = int(bm.get("md_top_n", min(2, len(df))))
+    # Benchmark rows often reuse small integer indices (0..N-1), so sharing the
+    # lead-stage checkpoint file can silently graft lead MD results onto drugs.
+    md_cfg["resume_from_checkpoint"] = False
     ens = md_cfg.setdefault("ensemble", {})
     ens["enabled"] = bool(bm.get("md_ensemble_enabled", True))
     ens["n_runs"] = int(bm.get("md_ensemble_n_runs", 1))
@@ -93,10 +96,11 @@ def _maybe_run_md_for_benchmark(
     ens["sample_interval_ps"] = float(bm.get("md_sample_interval_ps", 5))
 
     logger.info(
-        "Benchmark MD enabled: top_n=%d, ensemble_runs=%d, production_ps=%.1f",
+        "Benchmark MD enabled: top_n=%d, ensemble_runs=%d, production_ps=%.1f, resume=%s",
         int(md_cfg["top_n_for_md"]),
         int(ens["n_runs"]),
         float(ens["production_ps"]),
+        bool(md_cfg["resume_from_checkpoint"]),
     )
     md = MDSimulator(cfg_md)
     df_md = df.copy()
