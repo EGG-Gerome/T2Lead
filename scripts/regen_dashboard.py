@@ -8,6 +8,7 @@ Benchmark always runs full MD when ``benchmark.run_md`` is true in config (same 
 """
 import argparse
 import os
+import shutil
 from pathlib import Path
 from copy import deepcopy
 
@@ -27,10 +28,51 @@ TARGET_MAP = {
 }
 
 
+def _move_if_exists(src: Path, dst: Path) -> bool:
+    if not src.exists():
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        if dst.is_dir():
+            shutil.rmtree(dst)
+        else:
+            dst.unlink()
+    shutil.move(str(src), str(dst))
+    return True
+
+
+def _organize_stage4_visual_assets(stage4_dir: Path) -> int:
+    """Move legacy root-level PNG/SVG assets into a structured folder."""
+    mapping = {
+        "lead_structures_2d": "visual_assets/leads/structures",
+        "benchmark_structures_2d": "visual_assets/benchmark/structures",
+        "lead_structures_2d_grid.png": "visual_assets/leads/grids/lead_structures_2d_grid.png",
+        "lead_structures_2d_grid.svg": "visual_assets/leads/grids/lead_structures_2d_grid.svg",
+        "lead_structures_2d_grid_clean.png": "visual_assets/leads/grids/lead_structures_2d_grid_clean.png",
+        "lead_structures_2d_grid_clean.svg": "visual_assets/leads/grids/lead_structures_2d_grid_clean.svg",
+        "lead_structures_2d_grid_metrics.png": "visual_assets/leads/grids/lead_structures_2d_grid_metrics.png",
+        "lead_structures_2d_grid_metrics.svg": "visual_assets/leads/grids/lead_structures_2d_grid_metrics.svg",
+        "benchmark_structures_2d_grid_clean.png": "visual_assets/benchmark/grids/benchmark_structures_2d_grid_clean.png",
+        "benchmark_structures_2d_grid_clean.svg": "visual_assets/benchmark/grids/benchmark_structures_2d_grid_clean.svg",
+        "benchmark_structures_2d_grid_metrics.png": "visual_assets/benchmark/grids/benchmark_structures_2d_grid_metrics.png",
+        "benchmark_structures_2d_grid_metrics.svg": "visual_assets/benchmark/grids/benchmark_structures_2d_grid_metrics.svg",
+    }
+    moved = 0
+    for src_name, dst_rel in mapping.items():
+        if _move_if_exists(stage4_dir / src_name, stage4_dir / dst_rel):
+            moved += 1
+    return moved
+
+
 def main():
     parser = argparse.ArgumentParser(description="Regenerate benchmark + dashboard only")
     parser.add_argument("--disease", required=True, help="e.g. 'lung cancer' or 'breast cancer'")
     parser.add_argument("--out-dir", default="/root/autodl-fs/T2Lead", help="Pipeline output root")
+    parser.add_argument(
+        "--no-organize-assets",
+        action="store_true",
+        help="Do not move legacy PNG/SVG files into stage4_optimization/visual_assets/",
+    )
     args = parser.parse_args()
 
     disease = args.disease.strip()
@@ -80,6 +122,9 @@ def main():
     print("\n--- Generating dashboard.html ---")
     db = generate_report(cfg_s4, run_root, layout, stage4_dir=s4)
     print(f"Dashboard: {db}")
+    if not args.no_organize_assets:
+        moved = _organize_stage4_visual_assets(s4)
+        print(f"Visual assets organized: moved {moved} item(s) into {s4 / 'visual_assets'}")
     print("Done!")
 
 

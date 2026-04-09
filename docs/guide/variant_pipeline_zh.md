@@ -27,6 +27,7 @@ pipeline:
 variant_analysis:
   enabled: true
   vcf_path: "data/user_inputs/vcf/sample.ann.vcf"   # 或留空并配置 FASTQ
+  sample_id: "patient_001"   # 可选但推荐，多病人时用于输出隔离
   driver_genes: []        # 空表示全部；或 ["EGFR", "PIK3CA", ...]
   min_impact: "MODERATE"
   auto_stage23: true      # 每个突变基因自动运行 Stage 2-3
@@ -47,6 +48,24 @@ python scripts/run_pipeline.py \
 python scripts/run_pipeline.py -c configs/variant_breast.yaml -v
 ```
 
+## 主路径一键脚本（推荐）
+
+多病人隔离运行且不想写长命令时，直接用：
+
+```bash
+python scripts/run_mainpath.py \
+  --disease "breast cancer" \
+  --sample-id patient_001 \
+  --vcf-path /path/to/patient_001.ann.vcf.gz \
+  -v
+```
+
+`run_mainpath.py` 默认值：
+- 输出根目录：`/root/autodl-fs/T2Lead_mainpath`
+- `auto_stage23: true`
+- Sarek profile：`singularity`
+- 默认关闭 ChEMBL 共享缓存（优先隔离）
+
 可用 CLI 参数：
 
 | 参数 | 说明 |
@@ -60,6 +79,11 @@ python scripts/run_pipeline.py -c configs/variant_breast.yaml -v
 
 设置 `vcf_path` 时，Python 流水线直接解析该文件。若配置 FASTQ 且 `vcf_path` 为空，`SarekRunner` 会调用 Nextflow；得到的 VCF 路径随后被解析——除非单独跑 sarek，否则不必手动拷贝到固定 `results/sarek/...` 路径。
 
+重点：
+- **samplesheet 只用于 FASTQ 路线（Sarek）**。
+- **VCF 路线不需要 samplesheet**，直接指向一个注释后的 VCF 文件。
+- 做完 VEP 后它仍然是 VCF（`.vcf` / `.vcf.gz`），只是 INFO 里带 `CSQ` 注释字段。
+
 ## 独立运行 sarek（Makefile）
 
 ```bash
@@ -71,7 +95,11 @@ make run-sarek INPUT=data/user_inputs/samplesheet.csv
 
 ## 按突变的输出
 
-在 `stage4_optimization/<GENE_MUTATION>/` 下：
+默认（`variant_isolated_runs: true`）会先按运行隔离到：
+
+- `<pipeline.out_dir>/<disease_slug>/variant_runs/<sample_id>/<run_id>/...`
+
+随后在每个突变目录 `stage4_optimization/<GENE_MUTATION>/` 下：
 
 - `optimized_leads.csv`
 - 受体 PDB/PDBQT、`docking_poses/`、可选 `md_trajectories/`

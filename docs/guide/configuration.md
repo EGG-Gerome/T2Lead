@@ -17,8 +17,8 @@ Double underscores nest: `DP_TARGET_TO_HIT__CHEMBL__PAGE_LIMIT=500` → `target_
 
 | Section | Keys |
 |---------|------|
-| `pipeline` | `stages`, `out_dir`, `device`, `output_layout.use_stage_subdirs` |
-| `variant_analysis` | `enabled`, `vcf_path`, FASTQ paths, `driver_genes`, `min_impact`, `sarek.*` |
+| `pipeline` | `stages`, `out_dir`, `device`, `output_layout.use_stage_subdirs`, `output_layout.variant_isolated_runs`, `output_layout.variant_run_id` |
+| `variant_analysis` | `enabled`, `vcf_path`, FASTQ paths, `sample_id`, `driver_genes`, `min_impact`, `auto_stage23`, `sarek.*` |
 | `target_to_hit` | `external_activities_csv`, `screening_library_csv`, `docking_only`, `chembl.*`, `model.*`, `filter.*` |
 | `hit_to_lead` | `analog_gen.*`, `mpo.*`, `reinvent4.*` |
 | `lead_optimization` | `pdb_id`, `protein_sequence`, `docking.*`, `admet_deep.*` (incl. `hard_filter.*`), `md_simulation.*` (incl. `ensemble.*`), `scoring.*`, `explicit_md.*` |

@@ -2,7 +2,11 @@
 
 [English (output_reference.md)](output_reference.md)
 
-假定运行根目录为：已设置疾病时为 `<pipeline.out_dir>/<disease_slug>/`，否则为 `<pipeline.out_dir>/`。若 `use_stage_subdirs: false`，各阶段键将落在同一目录。
+假定运行根目录为：
+- 标准路径：设置疾病时为 `<pipeline.out_dir>/<disease_slug>/`，否则为 `<pipeline.out_dir>/`。
+- 变异路径（`variant_analysis.enabled: true` 且 `pipeline.output_layout.variant_isolated_runs: true`，默认开启）：`<pipeline.out_dir>/<disease_slug>/variant_runs/<sample_id>/<run_id>/`。
+
+其中 `sample_id` 优先取 `variant_analysis.sample_id`（为空时从 VCF/FASTQ 文件名推断），`run_id` 优先取 `pipeline.output_layout.variant_run_id`（为空时自动使用启动时间戳）。若 `use_stage_subdirs: false`，各阶段键将落在同一目录。
 
 ## 共享 ChEMBL 库（可选）
 
@@ -52,6 +56,7 @@
 | `<PDB>.pdb`、`*_fixed.pdb`、`*_receptor.pdbqt` | 受体 |
 | `docking_poses/pose_*.pdbqt` | 对接构象 |
 | `md_trajectories/` | MD 日志（若启用） |
+| `visual_assets/` | 可选的二维结构导出（lead/benchmark 网格图与单分子 SVG/PNG） |
 | `optimized_leads.csv` | 最终表，含 `docking_score`、`md_binding_energy`、`md_binding_energy_std`、`md_rmsd_mean`、`opt_score` 等 |
 
 仅变异运行时可能使用嵌套目录：`stage4_optimization/EGFR_L858R/optimized_leads.csv`。
@@ -63,3 +68,7 @@
 | `logs/` | 带时间戳的 `*_full.log`、`*_summary.log` |
 | `variant_analysis/` | 运行根下 `mutant_fastas/`、`structures/` |
 | `variant_calling/` | FASTQ 驱动检出时的 sarek 样本表与输出 |
+
+实用脚本：
+- `python scripts/export_stage4_2d.py --disease "breast cancer" --out-dir /root/autodl-fs/T2Lead`
+- `python scripts/organize_stage4_assets.py --disease "breast cancer" --out-dir /root/autodl-fs/T2Lead`

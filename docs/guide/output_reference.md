@@ -2,7 +2,11 @@
 
 [中文版 (output_reference_zh.md)](output_reference_zh.md)
 
-Assume run root: `<pipeline.out_dir>/<disease_slug>/` when a disease is set, else `<pipeline.out_dir>/`. With `use_stage_subdirs: false`, all stage keys collapse to the same directory.
+Assume run root:
+- Standard path: `<pipeline.out_dir>/<disease_slug>/` (or `<pipeline.out_dir>/` when disease is empty).
+- Variant path (`variant_analysis.enabled: true` and `pipeline.output_layout.variant_isolated_runs: true`, default): `<pipeline.out_dir>/<disease_slug>/variant_runs/<sample_id>/<run_id>/`.
+
+`sample_id` comes from `variant_analysis.sample_id` (or inferred from VCF/FASTQ filename when empty). `run_id` comes from `pipeline.output_layout.variant_run_id` (or launch timestamp when empty). With `use_stage_subdirs: false`, all stage keys collapse to the same directory.
 
 ## Shared ChEMBL library (optional)
 
@@ -54,6 +58,7 @@ If `shared_library_dir` is empty, legacy layout keeps all of the above inside ea
 | `<PDB>.pdb`, `*_fixed.pdb`, `*_receptor.pdbqt` | Receptor |
 | `docking_poses/pose_*.pdbqt` | Poses |
 | `md_trajectories/` | MD logs (if enabled) |
+| `visual_assets/` | Optional 2D structure exports (lead/benchmark grids + per-molecule SVG/PNG) |
 | `optimized_leads.csv` | Final table with `docking_score`, `md_binding_energy`, `md_binding_energy_std`, `md_rmsd_mean`, `opt_score`, … |
 
 Variant-only runs may use nested folders: `stage4_optimization/EGFR_L858R/optimized_leads.csv`.
@@ -65,3 +70,7 @@ Variant-only runs may use nested folders: `stage4_optimization/EGFR_L858R/optimi
 | `logs/` | Timestamped `*_full.log`, `*_summary.log` |
 | `variant_analysis/` | `mutant_fastas/`, `structures/` (under run root) |
 | `variant_calling/` | Sarek samplesheet + outputs when FASTQs drive calling |
+
+Utilities:
+- `python scripts/export_stage4_2d.py --disease "breast cancer" --out-dir /root/autodl-fs/T2Lead`
+- `python scripts/organize_stage4_assets.py --disease "breast cancer" --out-dir /root/autodl-fs/T2Lead`

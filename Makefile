@@ -28,7 +28,7 @@ CREM_DB_FILE ?= $(CURDIR)/data/crem_db/chembl33_sa25_f5.db
 NEXTFLOW_VERSION ?= 25.10.2
 NEXTFLOW_BIN     ?= $(HOME)/.local/bin/nextflow
 SAREK_VERSION    ?= 3.8.1
-SAREK_PROFILE    ?= docker
+SAREK_PROFILE    ?= singularity  # AutoDL/HPC default; override to docker on local machines
 SAREK_GENOME     ?= GRCh38
 
 help:  ## Show this help

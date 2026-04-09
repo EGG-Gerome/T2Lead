@@ -16,6 +16,8 @@ pipeline:
   # When true, artifacts go under <run_root>/stage{1..4}_*/ and <run_root>/logs/
   output_layout:
     use_stage_subdirs: true
+    variant_isolated_runs: true      # variant path writes to unique run roots (no overwrite by default)
+    variant_run_id: ""               # optional fixed run id; empty = auto timestamp per launch
 
 # -------------------------------------------------------------------
 # Variant Analysis — optional tumor/normal somatic mutation bridge
@@ -26,6 +28,7 @@ pipeline:
 variant_analysis:
   enabled: false
   vcf_path: ""                       # pre-annotated VEP VCF; skip Sarek if provided
+  sample_id: ""                      # optional patient/sample label for isolated variant run path
   tumor_fastq_r1: ""                 # paired FASTQ for Sarek; ignored if vcf_path set
   tumor_fastq_r2: ""
   normal_fastq_r1: ""
@@ -41,7 +44,7 @@ variant_analysis:
   sarek:
     version: "3.8.1"
     genome: "GATK.GRCh38"
-    profile: "docker"                # docker | singularity | conda
+    profile: "singularity"           # AutoDL/HPC default; local dev can use docker
     max_cpus: 16
     max_memory: "32.GB"
     extra_args: ""
