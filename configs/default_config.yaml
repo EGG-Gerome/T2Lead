@@ -40,6 +40,15 @@ variant_analysis:
                                      # false = reuse existing stage3_leads/final_lead_candidates.csv
   prefer_experimental_structure: true
   api_timeout_s: 30
+  # Auto-detect UCSC Xena somatic mutation TSV (set vcf_path to the .tsv) → minimal VEP VCF
+  input_auto_detect: true
+  structure_http_retries: 5           # RCSB / AlphaFold / ESMFold downloads
+  structure_polite_sleep: 0.05
+  auto_stage23_retries: 3             # ChEMBL map + Stage2-3 full attempt retries
+  auto_stage23_retry_delay_s: 15
+  xena:
+    sample_strategy: "max_variants"    # max_variants | explicit
+    sample_id: ""                      # required when sample_strategy=explicit
 
   sarek:
     version: "3.8.1"
@@ -201,7 +210,11 @@ lead_optimization:
     gb_model: "OBC2"                 # OBC1, OBC2, GBn, GBn2
     ligand_restraint_k_kcal_per_a2: 0.0   # implicit-MD ligand positional restraint; 0 disables
     ligand_restraint_heavy_only: true      # restrain heavy atoms only when enabled
-    parallel_workers: 1                    # single GPU worker; avoids multi-context contention
+    parallel_workers: 4                    # concurrent MD tasks; use 1 on single-GPU boxes
+    schedule_tasks_across_gpus: true       # round-robin OpenMM CUDA DeviceIndex when multiple GPUs
+    auto_discover_gpu_devices: true        # logical devices 0..N-1 (CUDA_VISIBLE_DEVICES aware)
+    max_auto_gpu_devices: 16               # cap auto-discovery
+    gpu_device_indices: []                 # optional explicit list e.g. [0,1,2,3]; empty = auto
     resume_from_checkpoint: true           # resume from md_trajectories/md_progress.csv when present
     # Ensemble MM-GBSA: multiple short MD runs; mean/std of approximate ΔG snapshots.
     ensemble:

@@ -64,6 +64,13 @@ def _build_overrides(args: argparse.Namespace) -> Dict[str, Any]:
 
     if not args.share_chembl_cache:
         overrides.setdefault("target_to_hit", {})["shared_library_dir"] = ""
+
+    if args.xena_sample_strategy or args.xena_sample_id:
+        xa = overrides.setdefault("variant_analysis", {}).setdefault("xena", {})
+        if args.xena_sample_strategy:
+            xa["sample_strategy"] = args.xena_sample_strategy
+        if args.xena_sample_id:
+            xa["sample_id"] = args.xena_sample_id
     return overrides
 
 
@@ -96,7 +103,7 @@ def main() -> None:
     parser.add_argument(
         "--vcf-path",
         default="",
-        help="VEP-annotated VCF path. If set, FASTQ args are ignored.",
+        help="VEP VCF, or Xena somatic mutation TSV (auto-converted when input_auto_detect is on).",
     )
     parser.add_argument("--tumor-r1", default="", help="Tumor FASTQ R1")
     parser.add_argument("--tumor-r2", default="", help="Tumor FASTQ R2")
@@ -117,6 +124,17 @@ def main() -> None:
         "--share-chembl-cache",
         action="store_true",
         help="Share ChEMBL crawl/fp_cache across runs (faster, less isolated).",
+    )
+    parser.add_argument(
+        "--xena-sample-strategy",
+        default="",
+        choices=["", "max_variants", "explicit"],
+        help="When --vcf-path is a Xena TSV: max_variants (default in YAML) or explicit.",
+    )
+    parser.add_argument(
+        "--xena-sample-id",
+        default="",
+        help="When strategy is explicit: TCGA sample id (must exist in TSV sample column).",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()

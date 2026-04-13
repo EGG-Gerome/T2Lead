@@ -15,8 +15,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
-
+from drugpipe.utils.http import HTTPClient
 from drugpipe.variant_analysis.mutant_sequence import MutantProtein
 
 logger = logging.getLogger(__name__)
@@ -38,6 +37,18 @@ class StructureBridge:
         self._timeout = int(va.get("api_timeout_s", 30))
         self._prefer_experimental = bool(va.get("prefer_experimental_structure", True))
         self._pdb_cache: Dict[str, List[str]] = {}
+        retries = max(1, int(va.get("structure_http_retries", 5)))
+        polite = float(va.get("structure_polite_sleep", 0.05))
+        self._http = HTTPClient(
+            timeout=max(self._timeout, 30),
+            retries=retries,
+            polite_sleep=polite,
+        )
+        self._http_esm = HTTPClient(
+            timeout=max(self._timeout, 120),
+            retries=retries,
+            polite_sleep=polite,
+        )
 
     def resolve_structures(
         self,
@@ -213,15 +224,9 @@ class StructureBridge:
     def _run_rcsb_search(self, query: dict) -> List[str]:
         """Execute an RCSB search query and return candidate PDB IDs."""
         try:
-            resp = requests.post(
-                _RCSB_SEARCH_API,
-                json=query,
-                timeout=self._timeout,
-            )
-            if resp.status_code == 204:
+            data = self._http.post_json(_RCSB_SEARCH_API, query)
+            if not data:
                 return []
-            resp.raise_for_status()
-            data = resp.json()
             results = data.get("result_set", [])
             return [r.get("identifier") for r in results if r.get("identifier")]
         except Exception as exc:
@@ -235,9 +240,8 @@ class StructureBridge:
             return pdb_path
         try:
             url = f"https://files.rcsb.org/download/{pdb_id.upper()}.pdb"
-            resp = requests.get(url, timeout=self._timeout)
-            resp.raise_for_status()
-            pdb_path.write_text(resp.text)
+            text = self._http.get_text(url)
+            pdb_path.write_text(text)
             logger.info("Downloaded PDB %s → %s", pdb_id, pdb_path)
             return pdb_path
         except Exception as exc:
@@ -251,12 +255,11 @@ class StructureBridge:
             return pdb_path
         try:
             url = _ALPHAFOLD_PDB_URL.format(uniprot=uniprot_id)
-            resp = requests.get(url, timeout=self._timeout)
-            resp.raise_for_status()
-            if "ATOM" not in resp.text:
+            text = self._http.get_text(url)
+            if "ATOM" not in text:
                 logger.warning("AlphaFold DB returned invalid PDB for %s", uniprot_id)
                 return None
-            pdb_path.write_text(resp.text)
+            pdb_path.write_text(text)
             logger.info("Downloaded AlphaFold DB model %s → %s", uniprot_id, pdb_path)
             return pdb_path
         except Exception as exc:
@@ -278,14 +281,11 @@ class StructureBridge:
             )
 
         try:
-            resp = requests.post(
+            pdb_text = self._http_esm.post_text(
                 _ESMFOLD_API,
-                data=seq,
+                seq,
                 headers={"Content-Type": "text/plain"},
-                timeout=max(self._timeout, 120),
             )
-            resp.raise_for_status()
-            pdb_text = resp.text
             if "ATOM" not in pdb_text:
                 logger.warning("ESMFold returned empty structure for %s", mp.mutation_label)
                 return None

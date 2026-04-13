@@ -10,6 +10,7 @@ import logging
 import random
 import re
 import sys
+import time
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -469,6 +470,33 @@ def _run_post_stage4(
 # 完整流水线
 # ======================================================================
 
+def _maybe_convert_xena_tsv_to_vcf(
+    cfg: Dict[str, Any],
+    vcf_path: str,
+    va_dir: Path,
+) -> str:
+    """If *vcf_path* is a Xena somatic mutation TSV, convert to minimal VEP VCF."""
+    p = Path(vcf_path)
+    va = cfg.get("variant_analysis", {}) or {}
+    if not p.is_file():
+        return vcf_path
+    if not bool(va.get("input_auto_detect", True)):
+        return vcf_path
+    if p.suffix.lower() not in (".tsv", ".txt"):
+        return vcf_path
+    from drugpipe.variant_analysis.xena_adapter import (
+        convert_xena_tsv_to_vep_vcf,
+        is_xena_somatic_mutation_tsv,
+    )
+
+    if not is_xena_somatic_mutation_tsv(p):
+        return vcf_path
+    logger.info("Detected Xena somatic mutation TSV; converting to VEP-style VCF …")
+    out = convert_xena_tsv_to_vep_vcf(p, va_dir / "converted_inputs", cfg)
+    cfg.setdefault("variant_analysis", {})["vcf_path"] = str(out)
+    return str(out)
+
+
 def _run_variant_analysis(cfg: Dict[str, Any], out_dir: Path) -> List[Dict[str, Any]]:
     """Execute the variant-analysis pathway: VCF parsing → mutant sequences → structures.
 
@@ -502,6 +530,8 @@ def _run_variant_analysis(cfg: Dict[str, Any], out_dir: Path) -> List[Dict[str, 
 
     va_dir = out_dir / "variant_analysis"
     va_dir.mkdir(parents=True, exist_ok=True)
+
+    vcf_path = _maybe_convert_xena_tsv_to_vcf(cfg, vcf_path, va_dir)
 
     parser = VCFParser(cfg)
     variants = parser.parse(vcf_path)
@@ -547,7 +577,21 @@ def _auto_stage23_for_gene(
     chembl_base = cfg.get("target_to_hit", {}).get("chembl", {}).get(
         "base_url", "https://www.ebi.ac.uk/chembl/api/data",
     )
-    target_id = resolve_chembl_target_by_gene(gene_symbol, chembl_base)
+    va = cfg.get("variant_analysis", {}) or {}
+    max_attempts = max(1, int(va.get("auto_stage23_retries", 3)))
+    delay_s = float(va.get("auto_stage23_retry_delay_s", 15.0))
+
+    target_id: Optional[str] = None
+    for attempt in range(max_attempts):
+        target_id = resolve_chembl_target_by_gene(gene_symbol, chembl_base)
+        if target_id:
+            break
+        logger.warning(
+            "ChEMBL target mapping failed for %s (attempt %d/%d).",
+            gene_symbol, attempt + 1, max_attempts,
+        )
+        if attempt + 1 < max_attempts:
+            time.sleep(delay_s)
     if not target_id:
         logger.warning("Cannot map gene %s to ChEMBL target; skipping auto Stage 2-3.", gene_symbol)
         return None
@@ -559,30 +603,40 @@ def _auto_stage23_for_gene(
 
     library_root = chembl_library_root(cfg, s2_dir)
 
-    try:
-        cfg_s2 = _override_out_dir(cfg, s2_dir)
-        df_hits = run_target_to_hit(
-            cfg_s2, target_chembl_id=target_id, crawl_out_dir=library_root,
-        )
-        trainer = df_hits.attrs.get("_trainer")
-        featurizer = df_hits.attrs.get("_featurizer")
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_attempts):
+        try:
+            cfg_s2 = _override_out_dir(cfg, s2_dir)
+            df_hits = run_target_to_hit(
+                cfg_s2, target_chembl_id=target_id, crawl_out_dir=library_root,
+            )
+            trainer = df_hits.attrs.get("_trainer")
+            featurizer = df_hits.attrs.get("_featurizer")
 
-        cfg_s3 = _override_out_dir(cfg, s3_dir)
-        predict_fn = trainer.predict if trainer else None
-        feat_fn = featurizer.transform if featurizer else None
-        df_leads = run_hit_to_lead(
-            cfg_s3, df_hits, model_predict_fn=predict_fn, featurizer_fn=feat_fn,
-        )
+            cfg_s3 = _override_out_dir(cfg, s3_dir)
+            predict_fn = trainer.predict if trainer else None
+            feat_fn = featurizer.transform if featurizer else None
+            df_leads = run_hit_to_lead(
+                cfg_s3, df_hits, model_predict_fn=predict_fn, featurizer_fn=feat_fn,
+            )
 
-        logger.info(
-            "Auto Stage 2-3 for %s (%s) complete — %d leads generated.",
-            gene_symbol, target_id, len(df_leads),
-        )
-        return df_leads
+            logger.info(
+                "Auto Stage 2-3 for %s (%s) complete — %d leads generated.",
+                gene_symbol, target_id, len(df_leads),
+            )
+            return df_leads
 
-    except Exception as exc:
-        logger.error("Auto Stage 2-3 failed for gene %s: %s", gene_symbol, exc)
-        return None
+        except Exception as exc:
+            last_exc = exc
+            logger.error(
+                "Auto Stage 2-3 failed for gene %s (attempt %d/%d): %s",
+                gene_symbol, attempt + 1, max_attempts, exc,
+            )
+            if attempt + 1 < max_attempts:
+                time.sleep(delay_s)
+    if last_exc:
+        logger.error("Auto Stage 2-3 failed for gene %s after %d attempts.", gene_symbol, max_attempts)
+    return None
 
 
 def run_pipeline(cfg: Dict[str, Any]) -> None:
