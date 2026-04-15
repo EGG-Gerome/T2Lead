@@ -49,6 +49,12 @@ variant_analysis:
   xena:
     sample_strategy: "max_variants"    # max_variants | explicit
     sample_id: ""                      # required when sample_strategy=explicit
+  mutation_modeling:
+    enabled: true                       # experimental template + point mutation modelling
+    local_optimize: true                # restrained minimisation around mutation site
+    local_optimize_window: 2            # +/- residue window kept flexible
+    local_optimize_k_kcal_per_a2: 10.0  # restraint strength for non-local heavy atoms
+    local_optimize_max_iterations: 500
 
   sarek:
     version: "3.8.1"
@@ -210,7 +216,7 @@ lead_optimization:
     gb_model: "OBC2"                 # OBC1, OBC2, GBn, GBn2
     ligand_restraint_k_kcal_per_a2: 0.0   # implicit-MD ligand positional restraint; 0 disables
     ligand_restraint_heavy_only: true      # restrain heavy atoms only when enabled
-    parallel_workers: 4                    # concurrent MD tasks; use 1 on single-GPU boxes
+    parallel_workers: 6                    # concurrent MD tasks; use 1 on single-GPU boxes
     schedule_tasks_across_gpus: true       # round-robin OpenMM CUDA DeviceIndex when multiple GPUs
     auto_discover_gpu_devices: true        # logical devices 0..N-1 (CUDA_VISIBLE_DEVICES aware)
     max_auto_gpu_devices: 16               # cap auto-discovery

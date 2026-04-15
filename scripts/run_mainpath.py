@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -53,6 +54,9 @@ def _build_overrides(args: argparse.Namespace) -> Dict[str, Any]:
             },
         },
     }
+
+    if args.device:
+        overrides.setdefault("pipeline", {})["device"] = args.device
     if args.vcf_path:
         overrides["variant_analysis"]["vcf_path"] = args.vcf_path
     else:
@@ -62,8 +66,16 @@ def _build_overrides(args: argparse.Namespace) -> Dict[str, Any]:
         overrides["variant_analysis"]["normal_fastq_r1"] = args.normal_r1
         overrides["variant_analysis"]["normal_fastq_r2"] = args.normal_r2
 
-    if not args.share_chembl_cache:
+    if args.no_share_chembl_cache:
         overrides.setdefault("target_to_hit", {})["shared_library_dir"] = ""
+
+    md_cfg = overrides.setdefault("lead_optimization", {}).setdefault("md_simulation", {})
+    if args.parallel_workers is not None:
+        md_cfg["parallel_workers"] = args.parallel_workers
+    if args.schedule_tasks_across_gpus is not None:
+        md_cfg["schedule_tasks_across_gpus"] = args.schedule_tasks_across_gpus
+    if args.gpu_device_indices:
+        md_cfg["gpu_device_indices"] = args.gpu_device_indices
 
     if args.xena_sample_strategy or args.xena_sample_id:
         xa = overrides.setdefault("variant_analysis", {}).setdefault("xena", {})
@@ -85,7 +97,27 @@ def _validate_args(args: argparse.Namespace) -> None:
         )
 
 
+def _parse_gpu_device_indices(raw: str) -> list[int]:
+    if not raw.strip():
+        return []
+    try:
+        values = [int(x.strip()) for x in raw.split(",") if x.strip()]
+    except ValueError as exc:
+        raise SystemExit("--gpu-device-indices must be a comma-separated integer list, e.g. 0,1,2") from exc
+    if any(v < 0 for v in values):
+        raise SystemExit("--gpu-device-indices only accepts non-negative integers.")
+    return values
+
+
 def main() -> None:
+    env_parallel_workers = os.getenv("PARALLEL_WORKERS", "").strip()
+    default_parallel_workers = None
+    if env_parallel_workers:
+        try:
+            default_parallel_workers = int(env_parallel_workers)
+        except ValueError:
+            raise SystemExit("Invalid PARALLEL_WORKERS env; expected integer (e.g. 1).")
+
     parser = argparse.ArgumentParser(
         description="Run variant-driven main path with isolated outputs by default.",
     )
@@ -99,6 +131,12 @@ def main() -> None:
         "--out-dir",
         default="/root/autodl-fs/T2Lead_mainpath",
         help="Output root for main path runs.",
+    )
+    parser.add_argument(
+        "--device",
+        default="",
+        choices=["", "auto", "cuda", "cpu", "mps"],
+        help="Override pipeline.device (auto|cuda|cpu|mps).",
     )
     parser.add_argument(
         "--vcf-path",
@@ -123,7 +161,12 @@ def main() -> None:
     parser.add_argument(
         "--share-chembl-cache",
         action="store_true",
-        help="Share ChEMBL crawl/fp_cache across runs (faster, less isolated).",
+        help="(兼容旧参数) 默认已经共享 ChEMBL 缓存，可忽略此参数。",
+    )
+    parser.add_argument(
+        "--no-share-chembl-cache",
+        action="store_true",
+        help="Disable shared ChEMBL crawl/fp_cache and use run-local Stage2 cache.",
     )
     parser.add_argument(
         "--xena-sample-strategy",
@@ -136,8 +179,36 @@ def main() -> None:
         default="",
         help="When strategy is explicit: TCGA sample id (must exist in TSV sample column).",
     )
+    parser.add_argument(
+        "--parallel-workers",
+        type=int,
+        default=default_parallel_workers,
+        help=(
+            "Override lead_optimization.md_simulation.parallel_workers. "
+            "If unset, keep YAML value. Also supports PARALLEL_WORKERS env compatibility."
+        ),
+    )
+    parser.add_argument(
+        "--schedule-tasks-across-gpus",
+        dest="schedule_tasks_across_gpus",
+        action="store_true",
+        help="Enable MD task round-robin across multiple GPUs.",
+    )
+    parser.add_argument(
+        "--no-schedule-tasks-across-gpus",
+        dest="schedule_tasks_across_gpus",
+        action="store_false",
+        help="Disable MD task round-robin across GPUs.",
+    )
+    parser.set_defaults(schedule_tasks_across_gpus=None)
+    parser.add_argument(
+        "--gpu-device-indices",
+        default="",
+        help="Comma-separated CUDA logical devices for MD (e.g. 0,1,2).",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
+    args.gpu_device_indices = _parse_gpu_device_indices(args.gpu_device_indices)
 
     _validate_args(args)
     log_level = logging.DEBUG if args.verbose else logging.INFO

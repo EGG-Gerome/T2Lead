@@ -23,6 +23,8 @@
 | `hit_to_lead` | `analog_gen.*`、`mpo.*`、`reinvent4.*` |
 | `lead_optimization` | `pdb_id`、`protein_sequence`、`docking.*`、`admet_deep.*`（含 `hard_filter.*`）、`md_simulation.*`（含 `ensemble.*`）、`scoring.*`、`explicit_md.*` |
 
+GPU 相关示例见：[gpu_execution_zh.md](gpu_execution_zh.md)。
+
 ## 阶段四评分默认权重
 
 - `scoring.w_docking`：0.25  

@@ -1,0 +1,26 @@
+---
+description: Enforce T2Lead execution safety, environment discipline, and verification.
+alwaysApply: false
+---
+
+# T2Lead Execution Safety
+
+- Always use the  conda environment for project commands (never rely on `base`), preferably via `conda run -n <env_name> ...`.
+- For Python/package commands, verify interpreter context first (`python -V` and environment identity) before long runs.
+- For jobs expected to run longer than 10 minutes, use resilient launch by default (`tmux`/`screen`/`nohup`) unless the user explicitly requests foreground mode.
+- For very large variant sets (for example >1000 variants), run a quick smoke subset first, then execute in chunks/batches for recoverability.
+- For biomedical/pharma pipeline tasks, prioritize correctness and safety over speed:
+  - do not claim success without evidence,
+  - distinguish observed facts from hypotheses,
+  - call out uncertainty explicitly.
+- After code changes, run relevant tests or smoke checks before declaring done.
+- For each run, create/update run records under `docs/experiments/runs/<date>_<run-name>_<run-id>/` with `REPORT.md`, `ARTIFACTS.md`, `COMMANDS.md`, and `METADATA.yaml`.
+- In `docs/`, default to Chinese for internal reports unless the user asks for bilingual or English collaboration copies.
+- Work in small increments: after each small implementation step, run relevant tests before moving on.
+- After each meaningful change, check `git status` and `git diff` to verify scope.
+- Do not claim completion without test/log evidence.
+- If a run fails/is interrupted, report:
+  - last confirmed successful step,
+  - last log timestamp,
+  - likely causes with confidence level,
+  - recovery plan.

@@ -69,6 +69,9 @@
 | `variant_analysis/` | 运行根下 `mutant_fastas/`、`structures/` |
 | `variant_calling/` | FASTQ 驱动检出时的 sarek 样本表与输出 |
 
+首次使用者可先看目录图解：
+[variant_runs_structure_zh.md](variant_runs_structure_zh.md)。
+
 实用脚本：
 - `python scripts/export_stage4_2d.py --disease "breast cancer" --out-dir /root/autodl-fs/T2Lead`
 - `python scripts/organize_stage4_assets.py --disease "breast cancer" --out-dir /root/autodl-fs/T2Lead`
