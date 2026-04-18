@@ -46,9 +46,31 @@ variant_analysis:
   structure_polite_sleep: 0.05
   auto_stage23_retries: 3             # ChEMBL map + Stage2-3 full attempt retries
   auto_stage23_retry_delay_s: 15
+  stage4_resume_enabled: true         # persist per-variant Stage4 checkpoint and skip completed variants
+  stage4_resume_retry_failed: false   # true = retry variants previously marked failed/skipped_no_leads
+  patient_aggregation:
+    enabled: true
+    top_k_per_variant: 5              # take top-K compounds from each variant optimized_leads.csv
+    top_n_patient_recommendations: 50 # keep top-N in patient_recommendations.csv
+    impact_weight_high: 1.0
+    impact_weight_moderate: 0.75
+    impact_weight_low: 0.45
+    md_unreliable_penalty_weight: 0.7 # multiplier when md_reliable=false
+    admet_risk_penalty_weight: 0.5    # contrib *= (1 - weight * admet_risk)
   xena:
     sample_strategy: "max_variants"    # max_variants | explicit
     sample_id: ""                      # required when sample_strategy=explicit
+  esmfold:
+    local_url: ""                       # e.g. http://localhost:8000/predict (LiteFold)
+    local_max_length: 700               # max seq length for local ESMFold (4090 24GB ≈ 700aa)
+    skip_above_length: 800              # skip ESMFold entirely for seqs longer than this
+    remote_enabled: false               # remote esmatlas.com API — disable to avoid 413/429
+    remote_retries: 2                   # reduced retries for remote (was 5, mostly wasted)
+
+  uniprot_local:
+    enabled: false                      # set true after downloading Swiss-Prot files
+    db_dir: ""                          # path to dir containing uniprot_sprot.fasta.gz + idmapping
+
   mutation_modeling:
     enabled: true                       # experimental template + point mutation modelling
     local_optimize: true                # restrained minimisation around mutation site

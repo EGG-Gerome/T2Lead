@@ -128,6 +128,17 @@ make run-sarek INPUT=data/user_inputs/samplesheet.csv
 
 突变结构由编排器写入 `lead_optimization._mutant_pdb_path` 并复制到阶段四工作目录。
 
+另外会在运行根目录新增：
+
+- `variant_analysis/stage4_resume_checkpoint.csv`
+  - 变异级 Stage4 断点续跑检查点（completed/failed/skipped_no_leads 等状态）。
+- `patient_aggregation/`
+  - 跨变异病人级聚合结果：
+  - `variant_top_leads.csv`
+  - `patient_recommendations.csv`
+  - `recommendation_notes_zh.md`
+  - `dashboard.html`
+
 ## 当小分子靶点路径不可行时
 
 当前主流程仍以小分子路径为主。若某批次“无可用靶点/无可靠候选”，建议将该批次转入 RNA 疗法分支规划（见 [module_improvement_roadmap_zh.md](module_improvement_roadmap_zh.md) 的 RNA 模块），并在 run 归档中记录触发条件与证据。

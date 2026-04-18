@@ -67,6 +67,8 @@
 |------|------|
 | `logs/` | 带时间戳的 `*_full.log`、`*_summary.log` |
 | `variant_analysis/` | 运行根下 `mutant_fastas/`、`structures/` |
+| `variant_analysis/stage4_resume_checkpoint.csv` | 变异级 Stage4 断点续跑状态文件 |
+| `patient_aggregation/` | 跨变异病人级汇总（`patient_recommendations.csv`、`recommendation_notes_zh.md`、`dashboard.html`） |
 | `variant_calling/` | FASTQ 驱动检出时的 sarek 样本表与输出 |
 
 首次使用者可先看目录图解：
