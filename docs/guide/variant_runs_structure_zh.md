@@ -27,6 +27,7 @@
   - `converted_inputs/`：Xena TSV 转换后的 VEP 风格 VCF。
   - `mutant_fastas/`：每个变异位点对应一个突变蛋白 FASTA。
   - `structures/`：结构文件（实验 PDB、`*_mut_localopt.pdb`、`*_esmfold.pdb`）。
+  - `stage4_resume_checkpoint.csv`：变异级 Stage4 断点续跑状态。
 - `stage1_targets/`
   - 靶点发现结果。
 - `stage2_hits/`
@@ -35,6 +36,8 @@
   - 先导分子结果。
 - `stage4_optimization/`
   - 对接/MD 优化结果（`optimized_leads.csv`、姿势、轨迹等）。
+- `patient_aggregation/`
+  - 病人级聚合结果（跨变异汇总后的推荐清单与 dashboard）。
 
 ## 常见疑问
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -60,14 +61,18 @@ def _auto_cast(val: str) -> Any:
         return True
     if val.lower() in ("false", "no"):
         return False
-    try:
-        return int(val)
-    except ValueError:
-        pass
-    try:
-        return float(val)
-    except ValueError:
-        pass
+    # Cast only strict numeric literals to avoid accidental conversion of
+    # IDs like "20260413_191441" (used in variant_run_id).
+    if re.fullmatch(r"[+-]?\d+", val):
+        try:
+            return int(val)
+        except ValueError:
+            pass
+    if re.fullmatch(r"[+-]?(\d+\.\d*|\d*\.\d+|\d+)", val):
+        try:
+            return float(val)
+        except ValueError:
+            pass
     return val
 
 

@@ -44,3 +44,16 @@ def test_stage_paths_flat(tmp_path: Path):
     run_root.mkdir(parents=True)
     layout = stage_paths(run_root, cfg)
     assert layout[STAGE2] == run_root
+
+
+def test_variant_run_id_env_keeps_underscore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("DP_PIPELINE__OUTPUT_LAYOUT__VARIANT_RUN_ID", "20260413_191441")
+    cfg = load_config(
+        overrides={
+            "pipeline": {"out_dir": str(tmp_path / "root")},
+            "target_discovery": {"disease": "breast cancer"},
+            "variant_analysis": {"enabled": True, "sample_id": "s1"},
+        },
+    )
+    run_root = run_root_for_config(cfg)
+    assert "20260413_191441" in str(run_root)

@@ -4,8 +4,8 @@ Decision tree (variant path):
   1. Prefer experimental RCSB structure for target gene/UniProt.
   2. Build mutant model by point-mutation on the experimental template.
   3. Run local relaxation (OpenMM restrained minimisation).
-  4. If any of the above fails, fall back to mutant-sequence ESMFold.
-  5. If ESMFold fails, use AlphaFold DB WT as last resort.
+  4. If any of the above fails, fall back to ESMFold (local first, then remote).
+  5. If ESMFold fails or seq too long, use AlphaFold DB WT as last resort.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from drugpipe.utils.http import HTTPClient
 from drugpipe.variant_analysis.mutant_sequence import MutantProtein
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _RCSB_SEARCH_API = "https://search.rcsb.org/rcsbsearch/v2/query"
 _ESMFOLD_API = "https://api.esmatlas.com/foldSequence/v1/pdb/"
+_ESMFOLD_LOCAL_DEFAULT = "http://localhost:8000/predict"
 _ALPHAFOLD_PDB_URL = "https://alphafold.ebi.ac.uk/files/AF-{uniprot}-F1-model_v4.pdb"
 
 _AA3_TO1 = {
@@ -45,12 +46,20 @@ _MUT_LABEL = re.compile(r"^(?P<ref>[A-Z\*])(?P<pos>\d+)(?P<alt>[A-Z\*])$")
 class StructureBridge:
     """Select and execute the best structure route per mutation."""
 
+    _global_structure_cache: ClassVar[Dict[str, Dict[str, Any]]] = {}
+
     def __init__(self, cfg: Optional[Dict[str, Any]] = None):
         self.cfg = cfg or {}
         va = self.cfg.get("variant_analysis", {})
         self._timeout = int(va.get("api_timeout_s", 30))
         self._prefer_experimental = bool(va.get("prefer_experimental_structure", True))
         self._pdb_cache: Dict[str, List[str]] = {}
+
+        esm_cfg = va.get("esmfold", {}) if isinstance(va.get("esmfold"), dict) else {}
+        self._esmfold_skip_threshold = int(esm_cfg.get("skip_above_length", 800))
+        self._esmfold_local_url = str(esm_cfg.get("local_url", "")).strip() or ""
+        self._esmfold_local_max_len = int(esm_cfg.get("local_max_length", 700))
+        self._esmfold_remote_enabled = bool(esm_cfg.get("remote_enabled", False))
 
         retries = max(1, int(va.get("structure_http_retries", 5)))
         polite = float(va.get("structure_polite_sleep", 0.05))
@@ -61,7 +70,7 @@ class StructureBridge:
         )
         self._http_esm = HTTPClient(
             timeout=max(self._timeout, 120),
-            retries=retries,
+            retries=max(1, int(esm_cfg.get("remote_retries", 2))),
             polite_sleep=polite,
         )
 
@@ -80,17 +89,37 @@ class StructureBridge:
         """For each mutant, resolve an actionable PDB path."""
         out_dir.mkdir(parents=True, exist_ok=True)
         results: List[Dict[str, Any]] = []
+        cache_hits = 0
 
         for mp in mutants:
-            record = self._resolve_one(mp, out_dir)
+            cache_key = f"{mp.uniprot_id or mp.gene_symbol}_{mp.mutation_label}"
+            cached = self._global_structure_cache.get(cache_key)
+            if cached and Path(cached["pdb_path"]).exists():
+                logger.info(
+                    "Global cache hit: %s → %s (%s)",
+                    cache_key, cached["pdb_path"], cached.get("method", "?"),
+                )
+                result = dict(cached)
+                result["mutant_protein"] = mp
+                results.append(result)
+                cache_hits += 1
+                continue
+
+            record = self._resolve_one_uncached(mp, out_dir)
             if record is not None:
+                self._global_structure_cache[cache_key] = {
+                    k: v for k, v in record.items() if k != "mutant_protein"
+                }
                 results.append(record)
 
-        logger.info("Resolved %d / %d mutant structures.", len(results), len(mutants))
+        logger.info(
+            "Resolved %d / %d mutant structures (%d from global cache).",
+            len(results), len(mutants), cache_hits,
+        )
         return results
 
-    def _resolve_one(self, mp: MutantProtein, out_dir: Path) -> Optional[Dict[str, Any]]:
-        """Resolve structure for a single mutant protein."""
+    def _resolve_one_uncached(self, mp: MutantProtein, out_dir: Path) -> Optional[Dict[str, Any]]:
+        """Resolve structure for a single mutant protein (no cache)."""
         gene = mp.gene_symbol
         label = mp.mutation_label
 
@@ -584,18 +613,73 @@ class StructureBridge:
             return None
 
     def _predict_esmfold(self, mp: MutantProtein, out_dir: Path) -> Optional[Path]:
-        """Predict structure via ESMFold API."""
+        """Predict structure via ESMFold — local-first, skip-long, remote-optional."""
         pdb_path = out_dir / f"{mp.gene_symbol}_{mp.mutation_label}_esmfold.pdb"
         if pdb_path.exists():
             return pdb_path
 
         seq = mp.mutant_sequence
-        if len(seq) > 400:
+        seq_len = len(seq)
+
+        if seq_len > self._esmfold_skip_threshold:
             logger.info(
-                "%s %s: sequence length %d > 400; ESMFold may be slow.",
-                mp.gene_symbol, mp.mutation_label, len(seq),
+                "%s %s: seq length %d > skip threshold %d — "
+                "skipping ESMFold entirely, proceeding to next fallback.",
+                mp.gene_symbol, mp.mutation_label, seq_len,
+                self._esmfold_skip_threshold,
+            )
+            return None
+
+        if self._esmfold_local_url and seq_len <= self._esmfold_local_max_len:
+            result = self._call_esmfold_local(mp, seq, pdb_path)
+            if result:
+                return result
+            logger.info(
+                "%s %s: local ESMFold failed, trying next option.",
+                mp.gene_symbol, mp.mutation_label,
             )
 
+        if not self._esmfold_remote_enabled:
+            logger.info(
+                "%s %s: remote ESMFold disabled (seq=%d) — next fallback.",
+                mp.gene_symbol, mp.mutation_label, seq_len,
+            )
+            return None
+
+        return self._call_esmfold_remote(mp, seq, pdb_path)
+
+    def _call_esmfold_local(
+        self, mp: MutantProtein, seq: str, pdb_path: Path,
+    ) -> Optional[Path]:
+        """Call locally deployed ESMFold (e.g. LiteFold)."""
+        import requests as _req
+
+        try:
+            logger.info(
+                "%s %s: calling local ESMFold (%d aa) ...",
+                mp.gene_symbol, mp.mutation_label, len(seq),
+            )
+            resp = _req.post(
+                self._esmfold_local_url,
+                data=seq,
+                headers={"Content-Type": "text/plain"},
+                timeout=300,
+            )
+            resp.raise_for_status()
+            pdb_text = resp.text
+            if "ATOM" not in pdb_text:
+                return None
+            pdb_path.write_text(pdb_text)
+            logger.info("Local ESMFold prediction saved -> %s", pdb_path)
+            return pdb_path
+        except Exception as exc:
+            logger.warning("Local ESMFold failed for %s: %s", mp.mutation_label, exc)
+            return None
+
+    def _call_esmfold_remote(
+        self, mp: MutantProtein, seq: str, pdb_path: Path,
+    ) -> Optional[Path]:
+        """Call remote ESMFold API (esmatlas.com) — only if enabled."""
         try:
             pdb_text = self._http_esm.post_text(
                 _ESMFOLD_API,
@@ -603,14 +687,14 @@ class StructureBridge:
                 headers={"Content-Type": "text/plain"},
             )
             if "ATOM" not in pdb_text:
-                logger.warning("ESMFold returned empty structure for %s", mp.mutation_label)
+                logger.warning("Remote ESMFold returned empty structure for %s", mp.mutation_label)
                 return None
             pdb_path.write_text(pdb_text)
-            logger.info("ESMFold prediction saved -> %s", pdb_path)
+            logger.info("Remote ESMFold prediction saved -> %s", pdb_path)
             return pdb_path
         except Exception as exc:
             logger.warning(
-                "ESMFold prediction failed for %s %s: %s",
+                "Remote ESMFold prediction failed for %s %s: %s",
                 mp.gene_symbol, mp.mutation_label, exc,
             )
             return None

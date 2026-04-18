@@ -12,6 +12,7 @@ import re
 import sys
 import time
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -556,6 +557,105 @@ def _run_variant_analysis(cfg: Dict[str, Any], out_dir: Path) -> List[Dict[str, 
     return structures
 
 
+_VARIANT_RESUME_COLUMNS = [
+    "variant_key",
+    "gene",
+    "mutation",
+    "method",
+    "pdb_path",
+    "stage4_dir",
+    "status",
+    "attempt",
+    "started_at",
+    "updated_at",
+    "error",
+    "n_input_leads",
+    "n_optimized_rows",
+    "optimized_csv",
+]
+
+
+def _variant_resume_file(run_out_dir: Path) -> Path:
+    va_dir = run_out_dir / "variant_analysis"
+    va_dir.mkdir(parents=True, exist_ok=True)
+    return va_dir / "stage4_resume_checkpoint.csv"
+
+
+def _variant_key(gene: str, mutation: str) -> str:
+    return f"{str(gene).strip()}::{str(mutation).strip()}"
+
+
+def _load_variant_resume_checkpoint(path: Path) -> pd.DataFrame:
+    if path.is_file():
+        try:
+            df = pd.read_csv(path)
+        except Exception as exc:
+            logger.warning("Failed reading resume checkpoint %s: %s", path, exc)
+            df = pd.DataFrame(columns=_VARIANT_RESUME_COLUMNS)
+    else:
+        df = pd.DataFrame(columns=_VARIANT_RESUME_COLUMNS)
+
+    for col in _VARIANT_RESUME_COLUMNS:
+        if col not in df.columns:
+            df[col] = pd.NA
+    if "variant_key" in df.columns:
+        df["variant_key"] = df["variant_key"].astype(str)
+        df = df[df["variant_key"].str.len() > 0]
+        df = df.drop_duplicates(subset=["variant_key"], keep="last")
+        df = df.set_index("variant_key", drop=False)
+    else:
+        df = pd.DataFrame(columns=_VARIANT_RESUME_COLUMNS).set_index(
+            pd.Index([], name="variant_key"),
+        )
+    return df
+
+
+def _save_variant_resume_checkpoint(path: Path, df: pd.DataFrame) -> None:
+    if df is None:
+        return
+    out = df.copy()
+    if "variant_key" not in out.columns:
+        out["variant_key"] = out.index.astype(str)
+    out = out.reset_index(drop=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    out.to_csv(tmp, index=False)
+    tmp.replace(path)
+
+
+def _resume_skip_decision(
+    row: pd.Series,
+    s4_out: Path,
+    retry_failed: bool,
+) -> Tuple[bool, str]:
+    status = str(row.get("status", "") or "").strip().lower()
+    opt_csv = s4_out / "optimized_leads.csv"
+    if status == "completed":
+        if opt_csv.exists():
+            return True, "completed + optimized_leads.csv exists"
+        return False, "marked completed but optimized_leads.csv missing; rerun"
+
+    if status in {"failed", "skipped_no_leads"} and not retry_failed:
+        return True, f"{status} and retry_failed=false"
+
+    return False, "resume permitted"
+
+
+def _build_variant_context(ms: Dict[str, Any], s4_out: Path) -> Dict[str, Any]:
+    mp = ms.get("mutant_protein")
+    var = getattr(mp, "variant", None)
+    return {
+        "variant_key": _variant_key(str(ms.get("gene", "")), str(ms.get("mutation", ""))),
+        "gene": str(ms.get("gene", "")),
+        "mutation": str(ms.get("mutation", "")),
+        "method": str(ms.get("method", "")),
+        "pdb_path": str(ms.get("pdb_path", "")),
+        "stage4_dir": str(s4_out),
+        "impact": str(getattr(var, "impact", "") or ""),
+        "consequence": str(getattr(var, "consequence", "") or ""),
+        "short_label": str(getattr(var, "short_label", "") or f"{ms.get('gene', '')} {ms.get('mutation', '')}"),
+    }
+
+
 def _auto_stage23_for_gene(
     cfg: Dict[str, Any],
     gene_symbol: str,
@@ -671,66 +771,155 @@ def run_pipeline(cfg: Dict[str, Any]) -> None:
             logger.info("Variant analysis produced %d mutant structures.", len(mutant_structures))
             if "lead_optimization" in stages:
                 auto_s23 = va_cfg.get("auto_stage23", False)
+                resume_enabled = bool(va_cfg.get("stage4_resume_enabled", True))
+                retry_failed = bool(va_cfg.get("stage4_resume_retry_failed", False))
+                resume_file = _variant_resume_file(run_out_dir)
+                ckpt = _load_variant_resume_checkpoint(resume_file) if resume_enabled else pd.DataFrame()
+                variant_contexts: List[Dict[str, Any]] = []
+
                 for ms in mutant_structures:
                     gene = str(ms["gene"])
                     mutation = str(ms["mutation"])
                     s4_out = resolve_variant_stage4_out(
                         run_out_dir, cfg, gene, mutation,
                     )
+                    ctx = _build_variant_context(ms, s4_out)
+                    variant_contexts.append(ctx)
+                    vkey = ctx["variant_key"]
+                    previous = ckpt.loc[vkey] if (resume_enabled and vkey in ckpt.index) else None
 
-                    if auto_s23:
-                        df_gene_leads = _auto_stage23_for_gene(
-                            cfg, gene, s4_out, layout,
-                        )
-                    else:
-                        df_gene_leads = None
-
-                    if df_gene_leads is None or df_gene_leads.empty:
-                        leads_csv = layout[STAGE3] / "final_lead_candidates.csv"
-                        if not leads_csv.exists():
-                            logger.error(
-                                "Stage 4 for %s %s requires lead candidates at %s "
-                                "(enable auto_stage23, run Stages 2–3 first, "
-                                "or copy a lead CSV there).",
-                                gene, mutation, leads_csv,
-                            )
+                    if previous is not None:
+                        skip, reason = _resume_skip_decision(previous, s4_out, retry_failed)
+                        if skip:
+                            logger.info("Resume skip %s %s: %s", gene, mutation, reason)
                             continue
-                        df_gene_leads = pd.read_csv(leads_csv)
+
+                    prev_attempt = int(previous.get("attempt", 0)) if previous is not None else 0
+                    if resume_enabled:
+                        ckpt.loc[vkey, _VARIANT_RESUME_COLUMNS] = [
+                            vkey,
+                            gene,
+                            mutation,
+                            str(ms.get("method", "")),
+                            str(ms.get("pdb_path", "")),
+                            str(s4_out),
+                            "running",
+                            prev_attempt + 1,
+                            datetime.now(timezone.utc).isoformat(),
+                            datetime.now(timezone.utc).isoformat(),
+                            "",
+                            "",
+                            "",
+                            "",
+                        ]
+                        _save_variant_resume_checkpoint(resume_file, ckpt)
+
+                    try:
                         if auto_s23:
-                            logger.warning(
-                                "Auto Stage 2-3 failed for %s; falling back to %s",
-                                gene, leads_csv,
+                            df_gene_leads = _auto_stage23_for_gene(
+                                cfg, gene, s4_out, layout,
                             )
-                        logger.info("Loaded %d leads from %s", len(df_gene_leads), leads_csv)
+                        else:
+                            df_gene_leads = None
 
-                    logger.info(
-                        "Running Stage 4 against %s %s (%s) with %d leads",
-                        gene, mutation, ms["method"], len(df_gene_leads),
-                    )
-                    cfg_mut = _override_out_dir(cfg, s4_out)
-                    lo = cfg_mut.setdefault("lead_optimization", {})
-                    lo["pdb_id"] = ""
-                    lo["protein_sequence"] = ""
-                    lo["_mutant_pdb_path"] = ms["pdb_path"]
-                    _df_opt, protein_info = run_lead_optimization(cfg_mut, df_gene_leads)
-                    from drugpipe.target_to_hit.chembl_api import resolve_chembl_target_by_gene
+                        if df_gene_leads is None or df_gene_leads.empty:
+                            leads_csv = layout[STAGE3] / "final_lead_candidates.csv"
+                            if not leads_csv.exists():
+                                logger.error(
+                                    "Stage 4 for %s %s requires lead candidates at %s "
+                                    "(enable auto_stage23, run Stages 2–3 first, "
+                                    "or copy a lead CSV there).",
+                                    gene, mutation, leads_csv,
+                                )
+                                if resume_enabled:
+                                    ckpt.loc[vkey, "status"] = "skipped_no_leads"
+                                    ckpt.loc[vkey, "updated_at"] = datetime.now(timezone.utc).isoformat()
+                                    ckpt.loc[vkey, "error"] = f"missing leads CSV: {leads_csv}"
+                                    _save_variant_resume_checkpoint(resume_file, ckpt)
+                                continue
+                            df_gene_leads = pd.read_csv(leads_csv)
+                            if auto_s23:
+                                logger.warning(
+                                    "Auto Stage 2-3 failed for %s; falling back to %s",
+                                    gene, leads_csv,
+                                )
+                            logger.info("Loaded %d leads from %s", len(df_gene_leads), leads_csv)
 
-                    chembl_base = (
-                        cfg_mut.get("target_to_hit", {})
-                        .get("chembl", {})
-                        .get("base_url", "https://www.ebi.ac.uk/chembl/api/data")
-                    )
-                    tid_v = resolve_chembl_target_by_gene(gene, chembl_base)
-                    _run_post_stage4(
-                        cfg_mut,
-                        run_out_dir,
-                        layout,
-                        tid_v,
-                        protein_info,
-                        None,
-                        None,
-                        stage4_dir=s4_out,
-                    )
+                        logger.info(
+                            "Running Stage 4 against %s %s (%s) with %d leads",
+                            gene, mutation, ms["method"], len(df_gene_leads),
+                        )
+                        cfg_mut = _override_out_dir(cfg, s4_out)
+                        lo = cfg_mut.setdefault("lead_optimization", {})
+                        lo["pdb_id"] = ""
+                        lo["protein_sequence"] = ""
+                        lo["_mutant_pdb_path"] = ms["pdb_path"]
+                        _df_opt, protein_info = run_lead_optimization(cfg_mut, df_gene_leads)
+                        from drugpipe.target_to_hit.chembl_api import resolve_chembl_target_by_gene
+
+                        chembl_base = (
+                            cfg_mut.get("target_to_hit", {})
+                            .get("chembl", {})
+                            .get("base_url", "https://www.ebi.ac.uk/chembl/api/data")
+                        )
+                        tid_v = resolve_chembl_target_by_gene(gene, chembl_base)
+                        _run_post_stage4(
+                            cfg_mut,
+                            run_out_dir,
+                            layout,
+                            tid_v,
+                            protein_info,
+                            None,
+                            None,
+                            stage4_dir=s4_out,
+                        )
+
+                        if resume_enabled:
+                            opt_csv = s4_out / "optimized_leads.csv"
+                            n_opt = 0
+                            if _df_opt is not None:
+                                try:
+                                    n_opt = len(_df_opt)
+                                except Exception:
+                                    n_opt = 0
+                            if n_opt <= 0 and opt_csv.is_file():
+                                try:
+                                    n_opt = len(pd.read_csv(opt_csv))
+                                except Exception:
+                                    n_opt = 0
+
+                            ckpt.loc[vkey, "status"] = "completed"
+                            ckpt.loc[vkey, "updated_at"] = datetime.now(timezone.utc).isoformat()
+                            ckpt.loc[vkey, "error"] = ""
+                            ckpt.loc[vkey, "n_input_leads"] = len(df_gene_leads)
+                            ckpt.loc[vkey, "n_optimized_rows"] = n_opt
+                            ckpt.loc[vkey, "optimized_csv"] = str(opt_csv)
+                            _save_variant_resume_checkpoint(resume_file, ckpt)
+                    except Exception as exc:
+                        logger.error(
+                            "Stage 4 failed for %s %s: %s",
+                            gene, mutation, exc, exc_info=True,
+                        )
+                        if resume_enabled:
+                            ckpt.loc[vkey, "status"] = "failed"
+                            ckpt.loc[vkey, "updated_at"] = datetime.now(timezone.utc).isoformat()
+                            ckpt.loc[vkey, "error"] = str(exc)
+                            _save_variant_resume_checkpoint(resume_file, ckpt)
+                        continue
+
+                try:
+                    from drugpipe.variant_analysis.patient_aggregation import build_patient_recommendations
+
+                    agg_res = build_patient_recommendations(cfg, run_out_dir, variant_contexts)
+                    if agg_res:
+                        logger.info(
+                            "Patient-level aggregation written: %s (rows=%s, dashboard=%s)",
+                            agg_res.get("patient_csv"),
+                            agg_res.get("n_patient_rows"),
+                            agg_res.get("dashboard_html"),
+                        )
+                except Exception as exc:
+                    logger.warning("Patient-level aggregation failed: %s", exc, exc_info=True)
             logger.info("=" * 60)
             logger.info("VARIANT-DRIVEN PIPELINE COMPLETE")
             logger.info("=" * 60)

@@ -18,12 +18,20 @@
 | 区块 | 键 |
 |------|-----|
 | `pipeline` | `stages`、`out_dir`、`device`、`output_layout.use_stage_subdirs`、`output_layout.variant_isolated_runs`、`output_layout.variant_run_id` |
-| `variant_analysis` | `enabled`、`vcf_path`、FASTQ 路径、`sample_id`、`driver_genes`、`min_impact`、`auto_stage23`、`sarek.*` |
+| `variant_analysis` | `enabled`、`vcf_path`、FASTQ 路径、`sample_id`、`driver_genes`、`min_impact`、`auto_stage23`、`stage4_resume_*`、`patient_aggregation.*`、`sarek.*` |
 | `target_to_hit` | `external_activities_csv`、`screening_library_csv`、`docking_only`、`chembl.*`、`model.*`、`filter.*` |
 | `hit_to_lead` | `analog_gen.*`、`mpo.*`、`reinvent4.*` |
 | `lead_optimization` | `pdb_id`、`protein_sequence`、`docking.*`、`admet_deep.*`（含 `hard_filter.*`）、`md_simulation.*`（含 `ensemble.*`）、`scoring.*`、`explicit_md.*` |
 
 GPU 相关示例见：[gpu_execution_zh.md](gpu_execution_zh.md)。
+
+变异断点续跑与病人级聚合常用键：
+
+- `variant_analysis.stage4_resume_enabled`
+- `variant_analysis.stage4_resume_retry_failed`
+- `variant_analysis.patient_aggregation.enabled`
+- `variant_analysis.patient_aggregation.top_k_per_variant`
+- `variant_analysis.patient_aggregation.top_n_patient_recommendations`
 
 ## 阶段四评分默认权重
 
