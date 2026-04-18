@@ -54,3 +54,7 @@ REINVENT4/
 
 # Local package installers (e.g. Apptainer .deb from README quickstart)
 *.deb
+
+# Private personal/team notes (keep local only)
+docs/progress/
+.cursor/skills/weekly-reporting-zh/

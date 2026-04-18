@@ -22,8 +22,8 @@ pipeline:
   stages:
     - lead_optimization
 
-  # AutoDL 大容量挂载盘。
-  out_dir: /root/autodl-fs/T2Lead
+  # 主路径默认独立输出根目录（避免覆盖次路径 / 既有结果）。
+  out_dir: /root/autodl-fs/T2Lead_mainpath
 
 # disease 字段决定 <out_dir>/<disease_slug>/ 子目录名。
 # 也可用命令行覆盖：--disease "lung cancer"
@@ -35,6 +35,7 @@ target_discovery:
 # -------------------------------------------------------------------
 variant_analysis:
   enabled: true
+  sample_id: ""    # 建议填写 patient_id / sample_id；为空时会从 VCF/FASTQ 名推断
 
   # ── 方案 A：已有 VEP 注释的 VCF ──
   # 也可用命令行覆盖：--vcf-path /path/to/your.vcf.gz

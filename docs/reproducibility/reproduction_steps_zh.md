@@ -23,8 +23,11 @@ python scripts/run_pipeline.py --disease "breast cancer" \
 ## 3. 变异路径（集成）
 
 - [ ] 安装 Nextflow + Java 21；Docker 已启动以运行 sarek。
-- [ ] 将肿瘤/正常 FASTQ 与有效的 sarek **样本表**放在 `data/user_inputs/`（列定义见 nf-core/sarek 文档）。
-- [ ] 执行 `make run-sarek INPUT=...`**或**通过 `variant_analysis.vcf_path` 提供 VEP 注释 VCF。
+- [ ] 三选一输入路径：
+  - 肿瘤/正常 FASTQ + sarek 样本表（列定义见 nf-core/sarek 文档），
+  - VEP 注释 VCF，
+  - Xena somatic mutation TSV（流程自动转换）。
+- [ ] 执行 `make run-sarek INPUT=...`（FASTQ 路线）**或**通过 `variant_analysis.vcf_path` 提供 VCF/TSV。
 - [ ] 确保存在 `stage3_leads/final_lead_candidates.csv`（先跑阶段二、三，或复制含 `canonical_smiles` 的小型测试 CSV）。
 - [ ] 设置 `variant_analysis.enabled: true` 并执行 `python scripts/run_pipeline.py -c variant.yaml -v`。
 - [ ] 确认出现 `stage4_optimization/<GENE_MUT>/optimized_leads.csv`。
@@ -41,6 +44,7 @@ python scripts/run_pipeline.py --disease "breast cancer" \
 
 - **optimized_leads 为空：** 检查 ADMET 硬过滤是否删光所有行；可暂时放宽 `sa_score_max` 或关闭部分 `hard_filter` 开关做排查。
 - **Sarek / VCF 路径：** Makefile 默认将结果写入 `variant_calling/sarek_results/`；请把 `vcf_path` 指向该次运行产出的真实已注释 VCF。
+- **Xena TSV 路径：** 若 `vcf_path` 指向 Xena TSV，流程会先转换为 VEP 风格 VCF；请在 `variant_analysis/converted_inputs/` 查转换结果。
 - **双输出根目录：** 始终设置 `DP_PIPELINE__OUT_DIR`，使中间产物与最终结果在同一目录树。
 
-全外显子数据准备（公开数据、BQSR、panel 与参考基因组一致等）请遵循机构规范；T2Lead 消费的是 **FASTQ 或 VCF**，不是原始下机文件。
+全外显子数据准备（公开数据、BQSR、panel 与参考基因组一致等）请遵循机构规范；T2Lead 消费的是 **FASTQ / 注释 VCF / Xena TSV** 输入，但用于变异解析的核心载体是 VCF 语义而非原始读段。

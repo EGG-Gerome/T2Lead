@@ -27,6 +27,7 @@ pipeline:
 variant_analysis:
   enabled: true
   vcf_path: "data/user_inputs/vcf/sample.ann.vcf"   # or leave empty and set FASTQs
+  sample_id: "patient_001"    # optional but recommended for multi-patient isolation
   driver_genes: []        # empty = all; or ["EGFR", "PIK3CA", ...]
   min_impact: "MODERATE"
   auto_stage23: true      # auto-run Stage 2-3 per variant gene
@@ -47,6 +48,24 @@ python scripts/run_pipeline.py \
 python scripts/run_pipeline.py -c configs/variant_breast.yaml -v
 ```
 
+## One-command main path runner
+
+For multi-patient isolated runs without long CLI flags, use:
+
+```bash
+python scripts/run_mainpath.py \
+  --disease "breast cancer" \
+  --sample-id patient_001 \
+  --vcf-path /path/to/patient_001.ann.vcf.gz \
+  -v
+```
+
+Defaults in `run_mainpath.py`:
+- output root: `/root/autodl-fs/T2Lead_mainpath`
+- `auto_stage23: true`
+- Sarek profile: `singularity`
+- ChEMBL shared cache disabled (isolation first)
+
 Available CLI flags:
 
 | Flag | Description |
@@ -60,6 +79,11 @@ Available CLI flags:
 
 When `vcf_path` is set, the Python pipeline parses it directly. When FASTQs are set and `vcf_path` is empty, `SarekRunner` invokes Nextflow; the discovered VCF path is then parsed — no manual copy to a fixed `results/sarek/...` path unless you run sarek standalone.
 
+Important:
+- **Samplesheet is only for FASTQ path (Sarek)**.
+- **VCF path does not need a samplesheet**; it points directly to one annotated VCF file.
+- After VEP annotation, it is still a VCF (`.vcf` / `.vcf.gz`) with `CSQ` in INFO.
+
 ## Standalone sarek (Makefile)
 
 ```bash
@@ -71,7 +95,11 @@ Point `variant_analysis.vcf_path` at the **annotated** VCF emitted by your Nextf
 
 ## Outputs per mutation
 
-Under `stage4_optimization/<GENE_MUTATION>/`:
+By default (`variant_isolated_runs: true`) outputs are isolated under:
+
+- `<pipeline.out_dir>/<disease_slug>/variant_runs/<sample_id>/<run_id>/...`
+
+Then per mutation, under `stage4_optimization/<GENE_MUTATION>/`:
 
 - `optimized_leads.csv`
 - Receptor PDB/PDBQT, `docking_poses/`, optional `md_trajectories/`

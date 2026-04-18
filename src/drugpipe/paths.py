@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import datetime
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -19,20 +20,93 @@ def disease_slug(disease: str) -> str:
     return slug or "default"
 
 
+def _token_slug(text: str, fallback: str) -> str:
+    """Normalize free-text token for directory names."""
+    tok = str(text or "").strip().lower()
+    tok = re.sub(r"[^\w\s-]", "", tok)
+    tok = re.sub(r"[\s]+", "_", tok)
+    return tok or fallback
+
+
+def _strip_known_suffixes(name: str) -> str:
+    """Drop common FASTQ/VCF extensions from a filename."""
+    low = name.lower()
+    for suf in (".fastq.gz", ".fq.gz", ".vcf.gz", ".fastq", ".fq", ".vcf"):
+        if low.endswith(suf):
+            return name[: -len(suf)]
+    return Path(name).stem
+
+
+def _variant_sample_id(cfg: Dict[str, Any]) -> str:
+    """Resolve patient/sample ID for variant-isolated run folders."""
+    va = (cfg.get("variant_analysis", {}) or {})
+    explicit = str(va.get("sample_id", "") or "").strip()
+    if explicit:
+        return _token_slug(explicit, "sample")
+
+    vcf_path = str(va.get("vcf_path", "") or "").strip()
+    if vcf_path:
+        return _token_slug(_strip_known_suffixes(Path(vcf_path).name), "sample")
+
+    tumor_r1 = str(va.get("tumor_fastq_r1", "") or "").strip()
+    if tumor_r1:
+        return _token_slug(_strip_known_suffixes(Path(tumor_r1).name), "sample")
+    return "sample"
+
+
+def _variant_run_id(cfg: Dict[str, Any]) -> str:
+    """Stable run id for this process (explicit override or timestamp)."""
+    layout = (cfg.get("pipeline", {}) or {}).get("output_layout", {}) or {}
+    explicit = str(layout.get("variant_run_id", "") or "").strip()
+    if explicit:
+        return _token_slug(explicit, "run")
+
+    runtime = cfg.setdefault("_runtime", {})
+    cached = str(runtime.get("variant_run_id", "") or "").strip()
+    if cached:
+        return cached
+    rid = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    runtime["variant_run_id"] = rid
+    return rid
+
+
+def _use_variant_isolated_runs(cfg: Dict[str, Any]) -> bool:
+    """Whether variant path should create unique run folders (default: true)."""
+    va = (cfg.get("variant_analysis", {}) or {})
+    if not bool(va.get("enabled", False)):
+        return False
+    layout = (cfg.get("pipeline", {}) or {}).get("output_layout", {}) or {}
+    return bool(layout.get("variant_isolated_runs", True))
+
+
 def run_root_for_config(cfg: Dict[str, Any]) -> Path:
-    """Directory root for this run (``out_dir`` or ``out_dir/<disease_slug>``).
-    本次运行的根目录：无疾病名时为 ``out_dir``，有疾病名时为 ``out_dir/<disease_slug>``（必要时创建）。
+    """Directory root for this run.
+
+    Standard path:
+      ``out_dir`` or ``out_dir/<disease_slug>``
+    Variant path (when enabled + isolated runs):
+      ``.../<disease_slug>/variant_runs/<sample_id>/<run_id>``
+
+    本次运行根目录：
+    - 标准路径：``out_dir`` 或 ``out_dir/<disease_slug>``
+    - 变异路径（启用隔离）：``.../<disease_slug>/variant_runs/<sample_id>/<run_id>``
     """
     from drugpipe.config import get_out_dir
 
     base = get_out_dir(cfg)
     d = (cfg.get("target_discovery", {}) or {}).get("disease", "") or ""
     d = str(d).strip()
-    if d:
-        r = base / disease_slug(d)
+    parent = (base / disease_slug(d)) if d else base
+
+    if _use_variant_isolated_runs(cfg):
+        sample_id = _variant_sample_id(cfg)
+        run_id = _variant_run_id(cfg)
+        r = parent / "variant_runs" / sample_id / run_id
         r.mkdir(parents=True, exist_ok=True)
         return r
-    return base
+
+    parent.mkdir(parents=True, exist_ok=True)
+    return parent
 
 
 # Subdirectory names (per-disease or default run root).

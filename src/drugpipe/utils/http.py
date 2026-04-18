@@ -57,9 +57,72 @@ class HTTPClient:
         for attempt in range(self.retries):
             try:
                 r = self._session.post(url, json=payload, timeout=self.timeout)
+                if r.status_code == 204:
+                    time.sleep(self.polite_sleep)
+                    return {}
                 if r.status_code == 200:
                     time.sleep(self.polite_sleep)
                     return r.json()
+                if r.status_code in (429, 500, 502, 503, 504):
+                    last_err = RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
+                    self._backoff(attempt)
+                    continue
+                r.raise_for_status()
+            except requests.RequestException as exc:
+                last_err = exc
+                self._backoff(attempt)
+        raise RuntimeError(f"POST failed after {self.retries} retries: {url} — {last_err}")
+
+    def get_text(
+        self,
+        url: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """GET URL and return decoded text (non-JSON bodies: PDB, plain text)."""
+        last_err: Optional[Exception] = None
+        hdr = dict(headers or {})
+        if "Accept" not in hdr:
+            hdr["Accept"] = "*/*"
+        for attempt in range(self.retries):
+            try:
+                r = self._session.get(
+                    url, params=params, timeout=self.timeout, headers=hdr,
+                )
+                if r.status_code == 200:
+                    time.sleep(self.polite_sleep)
+                    return r.text
+                if r.status_code in (429, 500, 502, 503, 504):
+                    last_err = RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
+                    self._backoff(attempt)
+                    continue
+                r.raise_for_status()
+            except requests.RequestException as exc:
+                last_err = exc
+                self._backoff(attempt)
+        raise RuntimeError(f"GET failed after {self.retries} retries: {url} — {last_err}")
+
+    def post_text(
+        self,
+        url: str,
+        data: Any,
+        *,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """POST raw body and return text (e.g. ESMFold PDB)."""
+        last_err: Optional[Exception] = None
+        hdr = dict(headers or {})
+        if "Accept" not in hdr:
+            hdr["Accept"] = "*/*"
+        for attempt in range(self.retries):
+            try:
+                r = self._session.post(
+                    url, data=data, timeout=self.timeout, headers=hdr,
+                )
+                if r.status_code == 200:
+                    time.sleep(self.polite_sleep)
+                    return r.text
                 if r.status_code in (429, 500, 502, 503, 504):
                     last_err = RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
                     self._backoff(attempt)

@@ -26,8 +26,11 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import os
 import shutil
+import subprocess
 import tempfile
+import threading
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -208,6 +211,62 @@ def _select_platform(device: str) -> Tuple[Optional[str], Dict[str, str]]:
     return "CPU", {}
 
 
+def _parse_int_list(val: Any) -> Optional[List[int]]:
+    """Parse ``gpu_device_indices`` from YAML (list) or comma-separated string."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, (list, tuple)):
+        out: List[int] = []
+        for x in val:
+            if x is None or str(x).strip() == "":
+                continue
+            out.append(int(x))
+        return out if out else None
+    s = str(val).strip()
+    if not s:
+        return None
+    parts = [p.strip() for p in s.replace(";", ",").split(",") if p.strip()]
+    return [int(p) for p in parts] if parts else None
+
+
+def _count_visible_cuda_devices() -> int:
+    """Best-effort count of GPUs visible to this process (CUDA_VISIBLE_DEVICES or nvidia-smi)."""
+    vis = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if vis and vis != "-1":
+        parts = [p for p in vis.split(",") if p.strip() != ""]
+        if parts:
+            return len(parts)
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "-L"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if out.returncode == 0 and out.stdout:
+            n = sum(
+                1 for line in out.stdout.splitlines()
+                if line.strip().startswith("GPU ")
+            )
+            if n > 0:
+                return n
+    except Exception:
+        pass
+    return 1
+
+
+def _resolve_md_gpu_device_indices(md: Dict[str, Any]) -> List[int]:
+    """Resolve logical GPU indices 0..N-1 for round-robin MD task assignment."""
+    explicit = _parse_int_list(md.get("gpu_device_indices"))
+    if explicit:
+        return explicit
+    if not bool(md.get("auto_discover_gpu_devices", True)):
+        return [0]
+    cap = max(1, int(md.get("max_auto_gpu_devices", 16)))
+    cnt = min(_count_visible_cuda_devices(), cap)
+    return list(range(cnt))
+
+
 def _probe_am1bcc_backend() -> Tuple[bool, str]:
     """Return whether the runtime can assign AM1-BCC charges via OpenFF."""
     if not _GAFF_OK:
@@ -379,8 +438,36 @@ class MDSimulator:
         self.parallel_workers = max(1, int(md.get("parallel_workers", 1)))
         self.resume_from_checkpoint = bool(md.get("resume_from_checkpoint", True))
 
+        self._tls = threading.local()
+        self._gpu_device_indices = _resolve_md_gpu_device_indices(md)
+        self._schedule_md_across_gpus = bool(md.get("schedule_tasks_across_gpus", True))
+
         device_str = cfg.get("pipeline", {}).get("device", "auto")
         self.platform, self.platform_props = _select_platform(device_str)
+
+    def _md_platform_props(self) -> Dict[str, str]:
+        """Platform properties for the current MD task (thread-local ``DeviceIndex`` on GPU)."""
+        props = dict(self.platform_props)
+        if self.platform in ("CUDA", "OpenCL"):
+            di = getattr(self._tls, "device_index", None)
+            if di is not None:
+                props["DeviceIndex"] = str(int(di))
+        return props
+
+    def _set_thread_gpu_for_task(self, task_ord: int) -> None:
+        """Assign round-robin GPU index for this MD task (ThreadPool workers)."""
+        if (
+            self._schedule_md_across_gpus
+            and self.platform in ("CUDA", "OpenCL")
+            and self._gpu_device_indices
+        ):
+            idx = int(self._gpu_device_indices[task_ord % len(self._gpu_device_indices)])
+            self._tls.device_index = idx
+        else:
+            self._tls.device_index = None
+
+    def _clear_thread_gpu(self) -> None:
+        self._tls.device_index = None
 
     # ------------------------------------------------------------------
     def run(
@@ -467,16 +554,41 @@ class MDSimulator:
 
         has_pose_col = "docking_pose_file" in df.columns
 
-        def _task(idx: int) -> Tuple[int, Optional[float], Optional[float], Optional[float]]:
-            smi = df.at[idx, "canonical_smiles"]
-            logger.info("Running MM-GBSA for molecule %d: %s", idx, smi[:60])
-            pose_path: Optional[str] = None
-            if has_pose_col:
-                _p = df.at[idx, "docking_pose_file"]
-                if _p and str(_p) != "" and Path(str(_p)).is_file():
-                    pose_path = str(_p)
-            energy, rmsd, estd = self._simulate_one(smi, pdb_path, md_dir, idx, pose_path)
-            return idx, energy, rmsd, estd
+        if (
+            self._schedule_md_across_gpus
+            and self.platform in ("CUDA", "OpenCL")
+            and self._gpu_device_indices
+            and len(pending) > 0
+        ):
+            logger.info(
+                "MD multi-GPU: platform=%s device_indices=%s (round-robin per molecule)",
+                self.platform,
+                self._gpu_device_indices,
+            )
+
+        def _task(
+            idx: int, task_ord: int,
+        ) -> Tuple[int, Optional[float], Optional[float], Optional[float]]:
+            self._set_thread_gpu_for_task(task_ord)
+            try:
+                smi = df.at[idx, "canonical_smiles"]
+                di = getattr(self._tls, "device_index", None)
+                if di is not None:
+                    logger.info(
+                        "Running MM-GBSA for molecule %d on %s DeviceIndex=%s: %s",
+                        idx, self.platform, di, smi[:60],
+                    )
+                else:
+                    logger.info("Running MM-GBSA for molecule %d: %s", idx, smi[:60])
+                pose_path: Optional[str] = None
+                if has_pose_col:
+                    _p = df.at[idx, "docking_pose_file"]
+                    if _p and str(_p) != "" and Path(str(_p)).is_file():
+                        pose_path = str(_p)
+                energy, rmsd, estd = self._simulate_one(smi, pdb_path, md_dir, idx, pose_path)
+                return idx, energy, rmsd, estd
+            finally:
+                self._clear_thread_gpu()
 
         def _update_result(
             idx: int,
@@ -505,13 +617,16 @@ class MDSimulator:
 
         n_workers = min(self.parallel_workers, len(pending))
         if n_workers <= 1:
-            for idx in pending:
-                _idx, energy, rmsd, estd = _task(idx)
+            for task_ord, idx in enumerate(pending):
+                _idx, energy, rmsd, estd = _task(idx, task_ord)
                 _update_result(_idx, energy, rmsd, estd)
         else:
             logger.info("Parallel MD: %d workers for %d molecules.", n_workers, len(pending))
             with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
-                futures = [pool.submit(_task, idx) for idx in pending]
+                futures = [
+                    pool.submit(_task, idx, task_ord)
+                    for task_ord, idx in enumerate(pending)
+                ]
                 for fut in concurrent.futures.as_completed(futures):
                     idx, energy, rmsd, estd = fut.result()
                     _update_result(idx, energy, rmsd, estd)
@@ -840,7 +955,7 @@ class MDSimulator:
             if platform:
                 simulation = app.Simulation(
                     modeller.topology, system, integrator,
-                    platform, self.platform_props,
+                    platform, self._md_platform_props(),
                 )
             else:
                 simulation = app.Simulation(modeller.topology, system, integrator)
@@ -1071,7 +1186,7 @@ class MDSimulator:
             if platform:
                 sim = app.Simulation(
                     topology, system, integrator,
-                    platform, self.platform_props,
+                    platform, self._md_platform_props(),
                 )
             else:
                 sim = app.Simulation(topology, system, integrator)
@@ -1113,7 +1228,7 @@ class MDSimulator:
             if platform:
                 simulation = app.Simulation(
                     topology, system, integrator,
-                    platform, self.platform_props,
+                    platform, self._md_platform_props(),
                 )
             else:
                 simulation = app.Simulation(topology, system, integrator)
@@ -1392,7 +1507,7 @@ class MDSimulator:
         if platform:
             simulation = app.Simulation(
                 modeller.topology, system, integrator,
-                platform, self.platform_props,
+                platform, self._md_platform_props(),
             )
         else:
             simulation = app.Simulation(modeller.topology, system, integrator)

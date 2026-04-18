@@ -54,6 +54,35 @@ python scripts/run_pipeline.py -c my_variant_config.yaml -v
 
 用户输入目录约定见 [data/user_inputs/README.md](data/user_inputs/README.md)（如有）。
 
+变异隔离运行目录（`variant_runs/<sample_id>/<run_id>/`）快速说明见：
+[docs/guide/variant_runs_structure_zh.md](docs/guide/variant_runs_structure_zh.md)。
+
+## 单 GPU / 多 GPU 切换
+
+推荐先看：
+[docs/guide/gpu_execution_zh.md](docs/guide/gpu_execution_zh.md)。
+
+简例（单 GPU）：
+
+```bash
+export DP_PIPELINE__DEVICE=cuda
+export DP_LEAD_OPTIMIZATION__MD_SIMULATION__PARALLEL_WORKERS=1
+python scripts/run_mainpath.py --disease "breast cancer" --vcf-path /path/to/input.vcf.gz -v
+```
+
+简例（多 GPU）：
+
+```bash
+python scripts/run_mainpath.py \
+  --disease "breast cancer" \
+  --vcf-path /path/to/input.vcf.gz \
+  --device cuda \
+  --parallel-workers 4 \
+  --schedule-tasks-across-gpus \
+  --gpu-device-indices 0,1,2,3 \
+  -v
+```
+
 ## 阶段四评分
 
 - **ADMET 硬过滤**：hERG 心毒、Veber 规则不通过、高合成难度（SA）化合物在 MD 前**直接剔除**。
@@ -109,10 +138,15 @@ nextflow run nf-core/sarek -profile singularity ...
 | [docs/guide/variant_pipeline_zh.md](docs/guide/variant_pipeline_zh.md) | VCF/FASTQ → 结构 → 阶段四 | [variant_pipeline.md](docs/guide/variant_pipeline.md) |
 | [docs/guide/disease_pipeline_zh.md](docs/guide/disease_pipeline_zh.md) | 疾病名驱动阶段一至四 | [disease_pipeline.md](docs/guide/disease_pipeline.md) |
 | [docs/guide/configuration_zh.md](docs/guide/configuration_zh.md) | YAML / `DP_*` 参考 | [configuration.md](docs/guide/configuration.md) |
+| [docs/guide/gpu_execution_zh.md](docs/guide/gpu_execution_zh.md) | 单/多 GPU 配置与 CLI 示例 | — |
 | [docs/guide/output_reference_zh.md](docs/guide/output_reference_zh.md) | 输出文件逐项说明 | [output_reference.md](docs/guide/output_reference.md) |
+| [docs/guide/variant_runs_structure_zh.md](docs/guide/variant_runs_structure_zh.md) | `variant_runs` 目录结构图解 | — |
+| [docs/guide/skills_and_rules_usage_zh.md](docs/guide/skills_and_rules_usage_zh.md) | Skill/Rule 使用与团队协作 | — |
+| [docs/guide/team_execution_rules_zh.md](docs/guide/team_execution_rules_zh.md) | 团队执行硬性规范 | — |
+| [docs/guide/module_improvement_roadmap_zh.md](docs/guide/module_improvement_roadmap_zh.md) | 模块改进方向与任务拆分建议 | — |
 | [docs/reproducibility/reproduction_steps_zh.md](docs/reproducibility/reproduction_steps_zh.md) | 复现检查清单 | [reproduction_steps.md](docs/reproducibility/reproduction_steps.md) |
 | [docs/reproducibility/test_data_preparation_zh.md](docs/reproducibility/test_data_preparation_zh.md) | WES/WGS 测试数据准备 | [test_data_preparation.md](docs/reproducibility/test_data_preparation.md) |
-| [docs/research/somatic_variant_pipeline_feasibility_zh.md](docs/research/somatic_variant_pipeline_feasibility_zh.md) | 体细胞变异路径可行性 | [somatic_variant_pipeline_feasibility.md](docs/research/somatic_variant_pipeline_feasibility.md) |
+| [docs/research/somatic_variant_pipeline_feasibility_zh.md](docs/research/somatic_variant_pipeline_feasibility_zh.md) | 体细胞变异路径可行性（历史研究文档，可选阅读） | [somatic_variant_pipeline_feasibility.md](docs/research/somatic_variant_pipeline_feasibility.md) |
 | [docs/postmortems/20260330_md_openmm_quantity_type_mismatch.md](docs/postmortems/20260330_md_openmm_quantity_type_mismatch.md) | 复盘：OpenMM Quantity 类型兼容性 | — |
 
 ## 项目结构（简）
